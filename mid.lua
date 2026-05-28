@@ -22,9 +22,13 @@ _G.maxWaitTime = 90
 _G.raceProgress = "N/A"
 
 -- THÊM BIẾN CHO AUTO RACE
-local RACE_WAIT_TIME = 180 -- 3 phút đếm ngược đm
+local RACE_WAIT_TIME = 60 -- 1 phút đếm ngược đm
 local waitingForPlayers = false
 local raceStartTime = nil
+
+-- THÊM BIẾN CHO RACE SOLO
+local raceSoloAttempted = false
+local lastTeleportTime = 0
 
 -- ══════════════════════════════════════════════════════════════
 -- PHẦN 1-4: GIỮ NGUYÊN
@@ -136,7 +140,7 @@ local function getCashObject()
 end
 
 -- ══════════════════════════════════════════════════════════════
--- PHẦN 5: BAY THẤP 5 + GIẢ LẬP DI CHUYỂN + GỬI CHECKPOINT + AUTO RACE
+-- PHẦN 5: BAY THẤP 5 + GIẢ LẬP DI CHUYỂN + GỬI CHECKPOINT + AUTO RACE SOLO
 -- ══════════════════════════════════════════════════════════════
 local function findMyRace()
     for _, v in pairs(workspace.Races.Race8.Races:GetChildren()) do
@@ -144,15 +148,61 @@ local function findMyRace()
     end
 end
 
--- HÀM TỰ ĐỘNG ẤN NÚT RACE CỨT
+-- HÀM TÌM VÀ ẤN NÚT RACE SOLO (CHỈ TÌM NÚT CÓ TEXT "SOLO")
+local function findAndClickRaceSolo()
+    local gui = player.PlayerGui
+    if not gui:FindFirstChild("Main_User_Interface") then return false end
+    
+    -- Tìm nút RACE SOLO trong teleport menu (khu vực race8)
+    local teleportContainer = gui.Main_User_Interface.Teleport.Container
+    if teleportContainer and teleportContainer:FindFirstChild("Races") then
+        local race8Container = teleportContainer.Races:FindFirstChild("Race8")
+        if race8Container and race8Container:FindFirstChild("Container") then
+            for _, btn in pairs(race8Container.Container:GetChildren()) do
+                if btn:IsA("TextButton") or btn:IsA("ImageButton") then
+                    local btnText = btn:FindFirstChild("TextLabel") and btn.TextLabel.Text or btn.Text or ""
+                    if btnText:upper():find("SOLO") or btn.Name:upper():find("SOLO") then
+                        clickGui(btn)
+                        print("[System] Đm, đã ấn nút RACE SOLO tại teleport race8")
+                        return true
+                    end
+                end
+            end
+        end
+    end
+    
+    -- Tìm nút RACE SOLO trong khu vực đang đứng
+    local currentGui = gui:FindFirstChild("Races")
+    if currentGui and currentGui:FindFirstChild("Container") then
+        local raceContainer = currentGui.Container
+        for _, btn in pairs(raceContainer:GetChildren()) do
+            if btn:IsA("TextButton") or btn:IsA("ImageButton") then
+                local btnText = btn:FindFirstChild("TextLabel") and btn.TextLabel.Text or btn.Text or ""
+                if btnText:upper():find("SOLO") or btn.Name:upper():find("SOLO") then
+                    clickGui(btn)
+                    print("[System] Đm, đã ấn nút RACE SOLO tại vị trí đứng")
+                    return true
+                end
+            end
+        end
+    end
+    
+    return false
+end
+
+-- HÀM TỰ ĐỘNG ẤN NÚT RACE SOLO (ĐÃ XÓA NÚT RACE THƯỜNG)
 local function autoJoinRace()
     local gui = player.PlayerGui
     if gui.Races.Container.Visible then
-        local raceButton = gui.Races.Container:FindFirstChild("Race")
-        if raceButton then
-            clickGui(raceButton)
-            print("[System] Đm, đã ấn nút RACE")
-            return true
+        for _, btn in pairs(gui.Races.Container:GetChildren()) do
+            if btn:IsA("TextButton") or btn:IsA("ImageButton") then
+                local btnText = btn:FindFirstChild("TextLabel") and btn.TextLabel.Text or btn.Text or ""
+                if btnText:upper():find("SOLO") or btn.Name:upper():find("SOLO") then
+                    clickGui(btn)
+                    print("[System] Đm, đã ấn nút RACE SOLO")
+                    return true
+                end
+            end
         end
     end
     return false
@@ -163,7 +213,7 @@ local function getPlayerCount()
     return #Players:GetPlayers()
 end
 
--- HÀM XỬ LÝ CHỜ RACE CHÓ CHẾT
+-- HÀM XỬ LÝ CHỜ RACE 1 PHÚT
 local function handleRaceWaiting()
     local gui = player.PlayerGui
     if not gui:FindFirstChild("Races") then return end
@@ -173,14 +223,14 @@ local function handleRaceWaiting()
     
     if waitingForPlayers then
         if raceStartTime and (tick() - raceStartTime) >= RACE_WAIT_TIME then
-            print("[System] Đm, 3 phút trôi qua đéo ai vào, tự động bắt đầu race!")
+            print("[System] Đm, 1 phút trôi qua đéo ai vào, tự động bắt đầu race solo!")
             autoJoinRace()
             waitingForPlayers = false
             raceStartTime = nil
         else
             local remaining = RACE_WAIT_TIME - (tick() - raceStartTime)
             if remaining > 0 then
-                print(string.format("[System] Chờ %d giây nữa đéo thấy thằng nào thì auto race", remaining))
+                print(string.format("[System] Chờ %d giây nữa đéo thấy thằng nào thì auto race solo", remaining))
             end
         end
         return
@@ -193,7 +243,7 @@ local function handleRaceWaiting()
             if not waitingForPlayers then
                 waitingForPlayers = true
                 raceStartTime = tick()
-                print("[System] Đm, chỉ có một mình, bắt đầu đếm 3 phút chờ thằng khác")
+                print("[System] Đm, chỉ có một mình, bắt đầu đếm 1 phút chờ thằng khác")
             end
         else
             if waitingForPlayers then
@@ -207,6 +257,7 @@ end
 
 local function mainAutoFarm()
     local gui = player.PlayerGui
+    
     if gui:FindFirstChild("LoadingScreen") then
         clickGui(gui.LoadingScreen.Center.Frame.Play.Button)
         task.wait(1.5)
@@ -243,12 +294,29 @@ local function mainAutoFarm()
                 end
             end
         end
+        
         clickGui(gui.Main_User_Interface.Teleport.Container.Races.Race8.Container.Teleport)
-        task.wait(2)
+        lastTeleportTime = tick()
+        task.wait(1.5)
+        
+        local raceSoloClicked = findAndClickRaceSolo()
+        if raceSoloClicked then
+            print("[System] Đm, đã ấn RACE SOLO sau khi teleport")
+            raceSoloAttempted = true
+            task.wait(1)
+        end
         return
     end
 
-    -- THÊM XỬ LÝ AUTO RACE 3 PHÚT
+    if gui.Races.Container.Visible and not raceSoloAttempted then
+        local clicked = findAndClickRaceSolo()
+        if clicked then
+            raceSoloAttempted = true
+            print("[System] Đm, đã ấn RACE SOLO trong menu race")
+            task.wait(1)
+        end
+    end
+
     handleRaceWaiting()
 
     local myRace = findMyRace()
@@ -260,6 +328,14 @@ local function mainAutoFarm()
     end
 
     local racer = myRace.Racers:FindFirstChild(player.Name)
+    if racer then
+        local currentCP = racer:GetAttribute("Checkpoint") or 0
+        local totalCP = myRace:FindFirstChild("Checkpoints") and myRace.Checkpoints.Value or 12
+        if currentCP >= totalCP then
+            raceSoloAttempted = false
+        end
+    end
+    
     if not racer then return end
 
     local currentCP = racer:GetAttribute("Checkpoint") or 0
@@ -405,8 +481,193 @@ local function runSubLoops()
 end
 
 -- ══════════════════════════════════════════════════════════════
+-- PHẦN 7: GUI CỨT VÃI - TỐI ƯU RAM + FPS
+-- ══════════════════════════════════════════════════════════════
+local screenGui = Instance.new("ScreenGui")
+screenGui.Name = "TiendatGptGui"
+screenGui.ResetOnSpawn = false
+screenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+screenGui.Parent = player.PlayerGui
+
+local blackScreen = Instance.new("Frame")
+blackScreen.Name = "BlackScreen"
+blackScreen.Size = UDim2.new(1, 0, 1, 0)
+blackScreen.BackgroundColor3 = Color3.new(0, 0, 0)
+blackScreen.BackgroundTransparency = 0.85
+blackScreen.Visible = true
+blackScreen.Parent = screenGui
+
+local mainFrame = Instance.new("Frame")
+mainFrame.Size = UDim2.new(0, 300, 0, 250)
+mainFrame.Position = UDim2.new(0, 10, 0, 10)
+mainFrame.BackgroundColor3 = Color3.new(0, 0, 0)
+mainFrame.BackgroundTransparency = 0.4
+mainFrame.BorderSizePixel = 1
+mainFrame.BorderColor3 = Color3.new(1, 0, 0)
+mainFrame.Parent = screenGui
+
+local title = Instance.new("TextLabel")
+title.Size = UDim2.new(1, 0, 0, 30)
+title.Position = UDim2.new(0, 0, 0, 0)
+title.BackgroundTransparency = 1
+title.Text = "TIENDATGPT - AUTO FARM SOLO"
+title.TextColor3 = Color3.new(1, 0, 0)
+title.TextSize = 16
+title.Font = Enum.Font.GothamBold
+title.Parent = mainFrame
+
+local cashLabel = Instance.new("TextLabel")
+cashLabel.Size = UDim2.new(1, 0, 0, 30)
+cashLabel.Position = UDim2.new(0, 0, 0, 35)
+cashLabel.BackgroundTransparency = 1
+cashLabel.Text = "TIỀN: 0"
+cashLabel.TextColor3 = Color3.new(0, 1, 0)
+cashLabel.TextSize = 14
+cashLabel.Font = Enum.Font.Gotham
+cashLabel.Parent = mainFrame
+
+local cpLabel = Instance.new("TextLabel")
+cpLabel.Size = UDim2.new(1, 0, 0, 30)
+cpLabel.Position = UDim2.new(0, 0, 0, 70)
+cpLabel.BackgroundTransparency = 1
+cpLabel.Text = "ĐUA: N/A"
+cpLabel.TextColor3 = Color3.new(1, 1, 0)
+cpLabel.TextSize = 14
+cpLabel.Font = Enum.Font.Gotham
+cpLabel.Parent = mainFrame
+
+local countdownLabel = Instance.new("TextLabel")
+countdownLabel.Size = UDim2.new(1, 0, 0, 30)
+countdownLabel.Position = UDim2.new(0, 0, 0, 105)
+countdownLabel.BackgroundTransparency = 1
+countdownLabel.Text = "CHỜ: 0s"
+countdownLabel.TextColor3 = Color3.new(1, 0.5, 0)
+countdownLabel.TextSize = 14
+countdownLabel.Font = Enum.Font.Gotham
+countdownLabel.Parent = mainFrame
+
+local fpsLabel = Instance.new("TextLabel")
+fpsLabel.Size = UDim2.new(1, 0, 0, 30)
+fpsLabel.Position = UDim2.new(0, 0, 0, 140)
+fpsLabel.BackgroundTransparency = 1
+fpsLabel.Text = "FPS: 0"
+fpsLabel.TextColor3 = Color3.new(0, 1, 1)
+fpsLabel.TextSize = 14
+fpsLabel.Font = Enum.Font.Gotham
+fpsLabel.Parent = mainFrame
+
+local raceStatusLabel = Instance.new("TextLabel")
+raceStatusLabel.Size = UDim2.new(1, 0, 0, 30)
+raceStatusLabel.Position = UDim2.new(0, 0, 0, 175)
+raceStatusLabel.BackgroundTransparency = 1
+raceStatusLabel.Text = "TRẠNG THÁI: CHỜ"
+raceStatusLabel.TextColor3 = Color3.new(1, 0, 1)
+raceStatusLabel.TextSize = 12
+raceStatusLabel.Font = Enum.Font.Gotham
+raceStatusLabel.Parent = mainFrame
+
+local toggleBlackBtn = Instance.new("TextButton")
+toggleBlackBtn.Size = UDim2.new(0, 80, 0, 25)
+toggleBlackBtn.Position = UDim2.new(0, 210, 0, 215)
+toggleBlackBtn.BackgroundColor3 = Color3.new(0.2, 0.2, 0.2)
+toggleBlackBtn.Text = "Tắt màn đen"
+toggleBlackBtn.TextColor3 = Color3.new(1, 1, 1)
+toggleBlackBtn.TextSize = 11
+toggleBlackBtn.Font = Enum.Font.Gotham
+toggleBlackBtn.Parent = mainFrame
+
+local blackScreenVisible = true
+toggleBlackBtn.MouseButton1Click:Connect(function()
+    blackScreenVisible = not blackScreenVisible
+    blackScreen.Visible = blackScreenVisible
+    toggleBlackBtn.Text = blackScreenVisible and "Tắt màn đen" or "Bật màn đen"
+end)
+
+local function optimizeRam()
+    pcall(function()
+        for _, v in pairs(workspace:GetDescendants()) do
+            if v:IsA("ParticleEmitter") or v:IsA("Fire") or v:IsA("Smoke") or v:IsA("Sparkles") then
+                v.Enabled = false
+            elseif v:IsA("Decal") or v:IsA("Texture") then
+                v:Destroy()
+            elseif v:IsA("MeshPart") and v.Material == Enum.Material.Neon then
+                v.Material = Enum.Material.SmoothPlastic
+            end
+        end
+        
+        for _, v in pairs(game:GetService("SoundService"):GetDescendants()) do
+            if v:IsA("Sound") then
+                v.Volume = 0
+                v:Stop()
+            end
+        end
+        
+        settings().Rendering.QualityLevel = Enum.QualityLevel.Level01
+        game:GetService("Workspace").StreamingEnabled = true
+        game:GetService("Workspace").StreamingPauseMode = Enum.StreamingPauseMode.Voluntary
+        
+        print("[System] Đm, đã tối ưu RAM vãi cứt")
+    end)
+end
+
+local lastTime = tick()
+local frameCount = 0
+local fps = 0
+
+game:GetService("RunService").RenderStepped:Connect(function()
+    frameCount = frameCount + 1
+    local currentTime = tick()
+    if currentTime - lastTime >= 1 then
+        fps = frameCount
+        frameCount = 0
+        lastTime = currentTime
+        fpsLabel.Text = "FPS: " .. fps
+    end
+end)
+
+local function updateGui()
+    pcall(function()
+        if cashObj then
+            cashLabel.Text = "TIỀN: " .. string.format("%.0f", cashObj.Value)
+        end
+        
+        cpLabel.Text = "ĐUA: " .. (_G.raceProgress or "N/A")
+        
+        if waitingForPlayers and raceStartTime then
+            local remaining = math.max(0, RACE_WAIT_TIME - (tick() - raceStartTime))
+            countdownLabel.Text = "CHỜ: " .. math.floor(remaining) .. "s"
+            raceStatusLabel.Text = "TRẠNG THÁI: CHỜ " .. math.floor(remaining) .. "s"
+            raceStatusLabel.TextColor3 = Color3.new(1, 0.5, 0)
+        else
+            local myRace = findMyRace()
+            if myRace then
+                raceStatusLabel.Text = "TRẠNG THÁI: ĐANG ĐUA SOLO"
+                raceStatusLabel.TextColor3 = Color3.new(0, 1, 0)
+                countdownLabel.Text = "CHỜ: 0s"
+            else
+                raceStatusLabel.Text = "TRẠNG THÁI: CHỜ RACE SOLO"
+                raceStatusLabel.TextColor3 = Color3.new(1, 0, 0)
+            end
+        end
+    end)
+end
+
+task.spawn(function()
+    while task.wait(0.5) do
+        updateGui()
+    end
+end)
+
+task.spawn(function()
+    while task.wait(30) do
+        optimizeRam()
+    end
+end)
+
+-- ══════════════════════════════════════════════════════════════
 -- KHỞI CHẠY
 -- ══════════════════════════════════════════════════════════════
+optimizeRam()
 fixLag()
 waitForGameLoad()
 print("[System] ✅ Đang tìm Cash...")
@@ -443,4 +704,4 @@ task.spawn(function()
     end
 end)
 
-print("[System] 🚀 Script đã chạy! (Đã gửi race_progress + auto race 3 phút lên API)")
+print("[System] 🚀 Script đã chạy! (Chỉ ấn RACE SOLO + auto race 1 phút + GUI)")
