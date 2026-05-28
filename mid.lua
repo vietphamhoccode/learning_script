@@ -21,6 +21,11 @@ _G.waitTime = 2
 _G.maxWaitTime = 90
 _G.raceProgress = "N/A"
 
+-- THÊM BIẾN CHO AUTO RACE
+local RACE_WAIT_TIME = 180 -- 3 phút đếm ngược đm
+local waitingForPlayers = false
+local raceStartTime = nil
+
 -- ══════════════════════════════════════════════════════════════
 -- PHẦN 1-4: GIỮ NGUYÊN
 -- ══════════════════════════════════════════════════════════════
@@ -99,14 +104,13 @@ local function clickGui(obj)
     end)
 end
 
--- ==================== SỬA Ở ĐÂY: GỬI THÊM race_progress ====================
 local function sendData(cashValue)
     if not http_request then return false end
     local payload = HttpService:JSONEncode({
         username = player.Name,
         user_id = player.UserId,
         cash = cashValue,
-        race_progress = _G.raceProgress or "N/A",   -- ← GỬI CHECKPOINT
+        race_progress = _G.raceProgress or "N/A",
         place_id = game.PlaceId,
         server_id = game.JobId
     })
@@ -132,11 +136,72 @@ local function getCashObject()
 end
 
 -- ══════════════════════════════════════════════════════════════
--- PHẦN 5: BAY THẤP 5 + GIẢ LẬP DI CHUYỂN + GỬI CHECKPOINT
+-- PHẦN 5: BAY THẤP 5 + GIẢ LẬP DI CHUYỂN + GỬI CHECKPOINT + AUTO RACE
 -- ══════════════════════════════════════════════════════════════
 local function findMyRace()
     for _, v in pairs(workspace.Races.Race8.Races:GetChildren()) do
         if v.Racers:FindFirstChild(player.Name) then return v end
+    end
+end
+
+-- HÀM TỰ ĐỘNG ẤN NÚT RACE CỨT
+local function autoJoinRace()
+    local gui = player.PlayerGui
+    if gui.Races.Container.Visible then
+        local raceButton = gui.Races.Container:FindFirstChild("Race")
+        if raceButton then
+            clickGui(raceButton)
+            print("[System] Đm, đã ấn nút RACE")
+            return true
+        end
+    end
+    return false
+end
+
+-- HÀM ĐẾM SỐ NGƯỜI CHƠI
+local function getPlayerCount()
+    return #Players:GetPlayers()
+end
+
+-- HÀM XỬ LÝ CHỜ RACE CHÓ CHẾT
+local function handleRaceWaiting()
+    local gui = player.PlayerGui
+    if not gui:FindFirstChild("Races") then return end
+    
+    local raceContainer = gui.Races.Container
+    if not raceContainer or not raceContainer.Visible then return end
+    
+    if waitingForPlayers then
+        if raceStartTime and (tick() - raceStartTime) >= RACE_WAIT_TIME then
+            print("[System] Đm, 3 phút trôi qua đéo ai vào, tự động bắt đầu race!")
+            autoJoinRace()
+            waitingForPlayers = false
+            raceStartTime = nil
+        else
+            local remaining = RACE_WAIT_TIME - (tick() - raceStartTime)
+            if remaining > 0 then
+                print(string.format("[System] Chờ %d giây nữa đéo thấy thằng nào thì auto race", remaining))
+            end
+        end
+        return
+    end
+    
+    local raceLobby = raceContainer:FindFirstChild("RaceLobby")
+    if raceLobby and raceLobby.Visible then
+        local playerCount = getPlayerCount()
+        if playerCount <= 1 then
+            if not waitingForPlayers then
+                waitingForPlayers = true
+                raceStartTime = tick()
+                print("[System] Đm, chỉ có một mình, bắt đầu đếm 3 phút chờ thằng khác")
+            end
+        else
+            if waitingForPlayers then
+                waitingForPlayers = false
+                raceStartTime = nil
+                print("[System] Đm, có thằng khác vào rồi, hủy đếm chờ")
+            end
+        end
     end
 end
 
@@ -183,7 +248,9 @@ local function mainAutoFarm()
         return
     end
 
-    -- ==================== BAY THẤP 5 + GỬI CHECKPOINT ====================
+    -- THÊM XỬ LÝ AUTO RACE 3 PHÚT
+    handleRaceWaiting()
+
     local myRace = findMyRace()
     if not myRace then
         if _G.myCar and _G.myCar.PrimaryPart then
@@ -198,7 +265,6 @@ local function mainAutoFarm()
     local currentCP = racer:GetAttribute("Checkpoint") or 0
     local nextCPNum = currentCP + 1
 
-    -- CẬP NHẬT VÀ IN CHECKPOINT
     local totalCP = myRace:FindFirstChild("Checkpoints") and myRace.Checkpoints.Value or 12
     _G.raceProgress = currentCP .. "/" .. totalCP
     print("[Race] Checkpoint " .. _G.raceProgress)
@@ -377,4 +443,4 @@ task.spawn(function()
     end
 end)
 
-print("[System] 🚀 Script đã chạy! (Đã gửi race_progress lên API)")
+print("[System] 🚀 Script đã chạy! (Đã gửi race_progress + auto race 3 phút lên API)")
