@@ -1,7 +1,6 @@
 local Players = game:GetService("Players")
 local HttpService = game:GetService("HttpService")
 local player = Players.LocalPlayer
-
 while not player do
     task.wait(0.5)
     player = Players.LocalPlayer
@@ -13,10 +12,8 @@ local HEARTBEAT_INTERVAL = 1
 local loaded = false
 local lastCash = nil
 local codes = _G.codes or {"ThanksFor810k"}
-
 local http_request = request or http_request or (syn and syn.request) or (fluxus and fluxus.request)
 
--- Biến chờ thông minh + race progress
 _G.waitTime = 2
 _G.maxWaitTime = 90
 _G.raceProgress = "N/A"
@@ -28,7 +25,6 @@ local function waitForGameLoad()
     local gui = player.PlayerGui
     local timeout = tick() + 30
     while not gui:FindFirstChild("LoadingScreen") and tick() < timeout do task.wait(0.5) end
-
     if gui:FindFirstChild("LoadingScreen") then
         pcall(function()
             local playBtn = gui.LoadingScreen.Center.Frame.Play.Button
@@ -49,10 +45,8 @@ local function waitForGameLoad()
             task.wait(1)
         end
     end
-
     local uiTimeout = tick() + 30
     while not gui:FindFirstChild("Main_User_Interface") and tick() < uiTimeout do task.wait(0.5) end
-
     if gui:FindFirstChild("StarterPick") and gui.StarterPick.Enabled == true then
         pcall(function()
             if firesignal then
@@ -99,14 +93,14 @@ local function clickGui(obj)
     end)
 end
 
--- ==================== SỬA Ở ĐÂY: GỬI THÊM race_progress ====================
+-- ==================== GỬI THÊM race_progress ====================
 local function sendData(cashValue)
     if not http_request then return false end
     local payload = HttpService:JSONEncode({
         username = player.Name,
         user_id = player.UserId,
         cash = cashValue,
-        race_progress = _G.raceProgress or "N/A",   -- ← GỬI CHECKPOINT
+        race_progress = _G.raceProgress or "N/A",
         place_id = game.PlaceId,
         server_id = game.JobId
     })
@@ -187,8 +181,12 @@ local function mainAutoFarm()
     local myRace = findMyRace()
     if not myRace then
         if _G.myCar and _G.myCar.PrimaryPart then
-            _G.myCar.PrimaryPart.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
+            pcall(function()
+                _G.myCar.PrimaryPart.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
+            end)
         end
+        _G.myCar = nil
+        _G.myRace = nil
         return
     end
 
@@ -198,7 +196,6 @@ local function mainAutoFarm()
     local currentCP = racer:GetAttribute("Checkpoint") or 0
     local nextCPNum = currentCP + 1
 
-    -- CẬP NHẬT VÀ IN CHECKPOINT
     local totalCP = myRace:FindFirstChild("Checkpoints") and myRace.Checkpoints.Value or 12
     _G.raceProgress = currentCP .. "/" .. totalCP
     print("[Race] Checkpoint " .. _G.raceProgress)
@@ -234,15 +231,12 @@ local function mainAutoFarm()
 
         local hrp = myCar.PrimaryPart
         local baseTarget = checkpointPart.Position
-
         local targetHeight = 5
         local ahead = hrp.CFrame.LookVector * 12
         local targetPos = baseTarget + Vector3.new(0, targetHeight, 0) + ahead
-
         local currentPos = hrp.Position
         local dist = (targetPos - currentPos).Magnitude
         local direction = (targetPos - currentPos).Unit
-
         local speed = 1020
         if dist < 38 then speed = 1320 end
         if cpName == "Finish" or nextCPNum >= checkpointsFolder.Value - 2 then
@@ -250,7 +244,6 @@ local function mainAutoFarm()
         end
 
         hrp.AssemblyLinearVelocity = direction * speed + Vector3.new(0, 22, 0)
-
         for _, part in pairs(myCar:GetDescendants()) do
             if part:IsA("BasePart") and part ~= hrp then
                 part.AssemblyLinearVelocity = direction * speed
@@ -267,7 +260,7 @@ local function mainAutoFarm()
 end
 
 -- ══════════════════════════════════════════════════════════════
--- PHẦN 6: VÒNG LẶP PHỤ
+-- PHẦN 6: VÒNG LẶP PHỤ (ĐÃ SỬA LỖI THOÁT XE)
 -- ══════════════════════════════════════════════════════════════
 local function runSubLoops()
     task.spawn(function()
@@ -295,15 +288,19 @@ local function runSubLoops()
                 end
             end)
 
+            -- ==================== FIX LỖI THOÁT XE + TELEPORT ====================
             pcall(function()
-                if player.Character then
+                if gui.Races.Container.Visible and _G.myRace and player.Character then
                     local hum = player.Character:FindFirstChildOfClass("Humanoid")
-                    if hum and not hum.Sit and _G.myCar then
-                        local seat = _G.myCar:FindFirstChildWhichIsA("VehicleSeat", true) or _G.myCar:FindFirstChildWhichIsA("Seat", true)
-                        if seat and player.Character.PrimaryPart then
-                            player.Character:PivotTo(seat.CFrame * CFrame.new(0, 1.8, 0))
-                            task.wait(0.1)
-                            if hum then hum.Sit = true end
+                    if hum and not hum.Sit and _G.myCar and _G.myCar.Parent then
+                        if not _G.lastSeatAttempt or tick() - _G.lastSeatAttempt > 0.8 then
+                            _G.lastSeatAttempt = tick()
+                            local seat = _G.myCar:FindFirstChildWhichIsA("VehicleSeat", true) or _G.myCar:FindFirstChildWhichIsA("Seat", true)
+                            if seat and player.Character.PrimaryPart then
+                                player.Character:PivotTo(seat.CFrame * CFrame.new(0, 1.8, 0))
+                                task.wait(0.15)
+                                if hum then hum.Sit = true end
+                            end
                         end
                     end
                 end
@@ -314,18 +311,23 @@ local function runSubLoops()
                     if v:FindFirstChild("Button") and not v.Button.Claimed.Visible then clickGui(v.Button) end
                 end
             end)
+
             pcall(function()
                 for _, v in pairs(gui.Challenges.Menu.Challenges:GetChildren()) do
                     if v:FindFirstChild("Action") and v.Action.Label.Text == "Claim" then clickGui(v.Action) end
                 end
             end)
+
             pcall(function()
                 if gui.DailyRewards.Menu.Today.Claim.Label.Text ~= "Claimed" then clickGui(gui.DailyRewards.Menu.Today.Claim) end
             end)
+
             pcall(function()
                 if gui.RobuxShop.Menu.List.Boosts.Boost.Use.Visible == true then clickGui(gui.RobuxShop.Menu.List.Boosts.Boost.Use) end
             end)
+
             pcall(function() clickGui(gui.Challenges.Menu.Rewards.Claim) end)
+
             pcall(function()
                 for _, v in pairs(codes) do
                     gui.RobuxShop.Menu.List.Rewards.Codes.Input.Text = v
@@ -344,7 +346,6 @@ end
 fixLag()
 waitForGameLoad()
 print("[System] ✅ Đang tìm Cash...")
-
 local cashObj = getCashObject()
 if not cashObj then warn("[System] ❌ Không tìm thấy Cash!") return end
 print("[System] ✅ Đã tìm thấy Cash: " .. tostring(cashObj.Value))
@@ -377,4 +378,4 @@ task.spawn(function()
     end
 end)
 
-print("[System] 🚀 Script đã chạy! (Đã gửi race_progress lên API)")
+print("[System] 🚀 Script đã chạy! (Đã fix lỗi thoát xe + teleport)")
