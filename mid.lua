@@ -536,26 +536,9 @@ local function mainAutoFarm()
 		local targetCFrame = CFrame.new(currentPos, targetPos)
 		hrp:PivotTo(targetCFrame:Lerp(hrp.CFrame, 0.87))
 
-		-- Về đích: tăng counter, kiểm tra có cần reset không
+		-- Tăng tốc khi gần Finish
 		if dist < 20 and cpName == "Finish" then
 			hrp.AssemblyLinearVelocity = direction * 1750
-
-			task.delay(1.5, function()
-				if isResettingForReset then return end  -- đã đang reset, bỏ qua
-
-				_G.myCar              = nil
-				_G.myRace             = nil
-				_G.wasRace            = true
-				_G.firstRaceDelayDone = nil
-
-				completedRaces = completedRaces + 1
-				print("[Race] ✅ Về đích! Trận " .. completedRaces .. "/" .. RACES_PER_RESET .. " hoàn thành.")
-
-				-- Đủ số trận → reset nhân vật và spawn xe lại
-				if completedRaces >= RACES_PER_RESET then
-					task.spawn(resetAndRespawn)
-				end
-			end)
 		end
 	end
 end
@@ -683,6 +666,72 @@ local function runSubLoops()
 				end
 			end)
 			print("[AFK] 🔢 Anti-AFK ping @ " .. os.date("%H:%M:%S"))
+		end
+	end)
+
+	-- Vòng lặp 4: THEO DÕI KẾT THÚC TRẬN (dựa vào server xoá racer)
+	task.spawn(function()
+		local wasInRace    = false  -- đang theo dõi 1 trận
+		local trackedRace  = nil    -- race đang theo dõi
+		local finishCooldown = false
+
+		while task.wait(0.5) do
+			if isResettingForReset then
+				wasInRace   = false
+				trackedRace = nil
+				continue
+			end
+
+			local currentRace = findMyRace()
+
+			-- Bắt đầu vào trận mới → bắt đầu theo dõi
+			if currentRace and not wasInRace then
+				wasInRace    = true
+				trackedRace  = currentRace
+				finishCooldown = false
+				print("[RaceWatch] 🏁 Bắt đầu theo dõi trận!")
+
+			-- Đang theo dõi → kiểm tra racer còn trong trận không
+			elseif wasInRace and trackedRace and not finishCooldown then
+				local racer = trackedRace.Racers:FindFirstChild(player.Name)
+				local totalCP = trackedRace:FindFirstChild("Checkpoints") and trackedRace.Checkpoints.Value or 12
+
+				local finished = false
+				if not racer then
+					-- Server đã xoá racer → về đích thật sự
+					finished = true
+					print("[RaceWatch] ✅ Racer bị xoá khỏi Racers → Về đích xác nhận!")
+				elseif racer:GetAttribute("Checkpoint") and racer:GetAttribute("Checkpoint") >= totalCP then
+					-- Checkpoint đạt tổng số → xong trận
+					finished = true
+					print("[RaceWatch] ✅ Checkpoint đạt tối đa → Về đích xác nhận!")
+				end
+
+				if finished and not isResettingForReset then
+					finishCooldown = true
+					wasInRace   = false
+					trackedRace = nil
+
+					_G.myCar              = nil
+					_G.myRace             = nil
+					_G.wasRace            = true
+					_G.firstRaceDelayDone = nil
+
+					completedRaces = completedRaces + 1
+					print("[RaceWatch] 🏆 Trận " .. completedRaces .. "/" .. RACES_PER_RESET .. " hoàn thành!")
+
+					if completedRaces >= RACES_PER_RESET then
+						task.spawn(resetAndRespawn)
+					end
+
+					task.delay(3, function() finishCooldown = false end)
+				end
+
+			-- Không còn trong race nào và không đang theo dõi → reset state
+			elseif not currentRace and wasInRace then
+				wasInRace   = false
+				trackedRace = nil
+			end
 		end
 	end)
 end
