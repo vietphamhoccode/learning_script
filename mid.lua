@@ -11,7 +11,7 @@ end
 
 -- ── CẤU HÌNH ─────────────────────────────────────────────────
 local API_URL            = "https://vietpham.shop/api.php"
-local HEARTBEAT_INTERVAL = 1
+local HEARTBEAT_INTERVAL = 30  -- gửi mỗi 30s tránh rate limit Cloudflare
 local loaded             = false
 local lastCash           = nil
 local codes              = _G.codes or {"ThanksFor810k"}
@@ -693,16 +693,19 @@ local function runSubLoops()
 
 			-- Đang theo dõi → kiểm tra racer còn trong trận không
 			elseif wasInRace and trackedRace and not finishCooldown then
-				-- trackedRace có thể bị destroy → kiểm tra trước khi access
-				if not trackedRace.Parent or not trackedRace:FindFirstChild("Racers") then
-					-- Race instance đã bị server xoá → coi như về đích
+				-- dùng pcall vì trackedRace có thể đã bị destroy → access .Parent throw error
+				local ok, racersFolder = pcall(function()
+					return trackedRace:FindFirstChild("Racers")
+				end)
+
+				if not ok or not racersFolder then
 					wasInRace   = false
 					trackedRace = nil
 					print("[RaceWatch] ⚠️ trackedRace không còn hợp lệ, reset theo dõi.")
 					continue
 				end
 
-				local racer = trackedRace.Racers:FindFirstChild(player.Name)
+				local racer = racersFolder:FindFirstChild(player.Name)
 
 				local finished = false
 				if not racer then
