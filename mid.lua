@@ -693,7 +693,16 @@ local function runSubLoops()
 
 			-- Đang theo dõi → kiểm tra racer còn trong trận không
 			elseif wasInRace and trackedRace and not finishCooldown then
-			local racer = trackedRace.Racers:FindFirstChild(player.Name)
+				-- trackedRace có thể bị destroy → kiểm tra trước khi access
+				if not trackedRace.Parent or not trackedRace:FindFirstChild("Racers") then
+					-- Race instance đã bị server xoá → coi như về đích
+					wasInRace   = false
+					trackedRace = nil
+					print("[RaceWatch] ⚠️ trackedRace không còn hợp lệ, reset theo dõi.")
+					continue
+				end
+
+				local racer = trackedRace.Racers:FindFirstChild(player.Name)
 
 				local finished = false
 				if not racer then
