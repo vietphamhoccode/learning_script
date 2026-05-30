@@ -1,5 +1,7 @@
 local Players = game:GetService("Players")
 local HttpService = game:GetService("HttpService")
+local TeleportService = game:GetService("TeleportService")
+local RunService = game:GetService("RunService")
 local player = Players.LocalPlayer
 
 while not player do
@@ -14,9 +16,13 @@ local loaded             = false
 local lastCash           = nil
 local codes              = _G.codes or {"ThanksFor810k"}
 
-_G.waitTime     = 2
-_G.maxWaitTime  = 90
-_G.raceProgress = "N/A"
+_G.waitTime      = 2
+_G.maxWaitTime   = 90
+_G.raceProgress  = "N/A"
+
+-- Lưu server VIP ngay khi script chạy để rejoin sau khi mất mạng
+_G.savedPlaceId  = _G.savedPlaceId  or game.PlaceId
+_G.savedServerId = _G.savedServerId or game.JobId
 
 -- ── Request fallback ─────────────────────────────────────────
 local http_request = request or http_request or (syn and syn.request) or (fluxus and fluxus.request)
@@ -120,12 +126,12 @@ local function sendData(cashValue, raceProgress)
 	if not http_request then return false end
 
 	local payload = HttpService:JSONEncode({
-		username   = player.Name,
-		user_id    = player.UserId,
-		cash       = cashValue,
+		username      = player.Name,
+		user_id       = player.UserId,
+		cash          = cashValue,
 		race_progress = raceProgress or _G.raceProgress or "N/A",
-		place_id   = game.PlaceId,
-		server_id  = game.JobId
+		place_id      = game.PlaceId,
+		server_id     = game.JobId
 	})
 
 	local success, result = pcall(function()
@@ -156,7 +162,114 @@ local function getCashObject()
 end
 
 -- ══════════════════════════════════════════════════════════════
--- PHẦN 5: AUTO FARM RACE
+-- PHẦN 5: REJOIN ĐÚNG SERVER VIP KHI MẤT KẾT NỐI
+-- ══════════════════════════════════════════════════════════════
+
+-- Kiểm tra mạng còn hoạt động không (ping API)
+local function isNetworkAlive()
+	if not http_request then return true end -- không có http_request thì bỏ qua
+	local ok = pcall(function()
+		local res = http_request({
+			Url    = API_URL .. "?ping=1",
+			Method = "GET",
+		})
+		if not res or res.StatusCode == 0 then
+			error("no response")
+		end
+	end)
+	return ok
+end
+
+-- Chờ mạng sống lại (thử mỗi 3 giây, tối đa 10 phút)
+local function waitForNetwork()
+	print("[Rejoin] ⏳ Đang chờ mạng khôi phục...")
+	local timeout = tick() + 600
+	while tick() < timeout do
+		task.wait(3)
+		if isNetworkAlive() then
+			print("[Rejoin] ✅ Mạng đã trở lại!")
+			return true
+		end
+	end
+	warn("[Rejoin] ❌ Timeout chờ mạng (10 phút).")
+	return false
+end
+
+-- Rejoin đúng server VIP đã lưu
+local function rejoinServer()
+	local placeId  = _G.savedPlaceId
+	local serverId = _G.savedServerId
+
+	if not placeId or not serverId or serverId == "" then
+		warn("[Rejoin] ❌ Không có server ID đã lưu, rejoin server ngẫu nhiên.")
+		pcall(function()
+			TeleportService:Teleport(placeId or game.PlaceId, player)
+		end)
+		return
+	end
+
+	print("[Rejoin] 🔄 Rejoin server: " .. tostring(serverId))
+
+	-- Thử TeleportToPlaceInstance (rejoin đúng server VIP)
+	local ok, err = pcall(function()
+		TeleportService:TeleportToPlaceInstance(placeId, serverId, player)
+	end)
+
+	if not ok then
+		warn("[Rejoin] ⚠️ TeleportToPlaceInstance thất bại: " .. tostring(err))
+		-- Fallback: rejoin server ngẫu nhiên cùng game
+		pcall(function()
+			TeleportService:Teleport(placeId, player)
+		end)
+	end
+end
+
+-- Monitor mất mạng liên tục qua heartbeat
+local function startRejoinMonitor()
+	task.spawn(function()
+		local lastHeartbeat = tick()
+		local disconnected  = false
+		local CHECK_INTERVAL = 5  -- kiểm tra mỗi 5 giây
+		local DEAD_THRESHOLD = 15 -- coi là mất mạng nếu API không phản hồi 15s liên tiếp
+
+		-- Theo dõi heartbeat của RunService để phát hiện freeze/disconnect
+		local hbConn = RunService.Heartbeat:Connect(function()
+			lastHeartbeat = tick()
+		end)
+
+		while task.wait(CHECK_INTERVAL) do
+			-- Nếu heartbeat bị treo quá lâu → có thể mất kết nối
+			local timeSinceHB = tick() - lastHeartbeat
+			local networkDead = not isNetworkAlive()
+
+			if networkDead and not disconnected then
+				disconnected = true
+				warn("[Rejoin] 🔴 Phát hiện mất kết nối! Chờ mạng phục hồi...")
+
+				-- Dừng theo dõi heartbeat tạm thời
+				hbConn:Disconnect()
+
+				local networkBack = waitForNetwork()
+				if networkBack then
+					task.wait(2) -- buffer nhỏ trước khi rejoin
+					rejoinServer()
+				end
+				-- Sau khi rejoin script sẽ chạy lại từ đầu, không cần resume
+
+			elseif not networkDead and disconnected then
+				-- Mạng trở lại trong cùng session (hiếm, nhưng xử lý luôn)
+				disconnected = false
+				hbConn = RunService.Heartbeat:Connect(function()
+					lastHeartbeat = tick()
+				end)
+				print("[Rejoin] ✅ Kết nối phục hồi trong session.")
+			end
+		end
+	end)
+end
+
+-- ══════════════════════════════════════════════════════════════
+-- PHẦN 6: AUTO FARM RACE
 -- ══════════════════════════════════════════════════════════════
 
 local function findMyRace()
@@ -246,7 +359,7 @@ local function mainAutoFarm()
 	end
 	if not checkpointsFolder then return end
 
-	local cpName        = (nextCPNum >= checkpointsFolder.Value) and "Finish" or tostring(nextCPNum)
+	local cpName         = (nextCPNum >= checkpointsFolder.Value) and "Finish" or tostring(nextCPNum)
 	local checkpointPart = checkpointsFolder:FindFirstChild(cpName)
 	if not checkpointPart then return end
 
@@ -261,10 +374,10 @@ local function mainAutoFarm()
 		if tick() - _G.lastRaceUpdate < 0.03 then return end
 		_G.lastRaceUpdate = tick()
 
-		local hrp       = myCar.PrimaryPart
+		local hrp        = myCar.PrimaryPart
 		local baseTarget = checkpointPart.Position
-		local ahead     = hrp.CFrame.LookVector * 12
-		local targetPos = baseTarget + Vector3.new(0, 5, 0) + ahead
+		local ahead      = hrp.CFrame.LookVector * 12
+		local targetPos  = baseTarget + Vector3.new(0, 5, 0) + ahead
 
 		local currentPos = hrp.Position
 		local dist       = (targetPos - currentPos).Magnitude
@@ -291,9 +404,9 @@ local function mainAutoFarm()
 		if dist < 20 and cpName == "Finish" then
 			hrp.AssemblyLinearVelocity = direction * 1750
 			task.delay(1.5, function()
-				_G.myCar             = nil
-				_G.myRace            = nil
-				_G.wasRace           = true
+				_G.myCar              = nil
+				_G.myRace             = nil
+				_G.wasRace            = true
 				_G.firstRaceDelayDone = nil
 				print("[Race] ✅ Đã về đích! Reset trạng thái xe.")
 			end)
@@ -302,7 +415,7 @@ local function mainAutoFarm()
 end
 
 -- ══════════════════════════════════════════════════════════════
--- PHẦN 6: VÒNG LẶP PHỤ + ANTI-THOÁT XE
+-- PHẦN 7: VÒNG LẶP PHỤ + ANTI-THOÁT XE
 -- ══════════════════════════════════════════════════════════════
 
 local function runSubLoops()
@@ -378,9 +491,9 @@ local function runSubLoops()
 					local hum = player.Character:FindFirstChildOfClass("Humanoid")
 
 					-- [FIX 2] Không sit khi đã về đích
-					local racer2    = _G.myRace and _G.myRace.Racers:FindFirstChild(player.Name)
+					local racer2     = _G.myRace and _G.myRace.Racers:FindFirstChild(player.Name)
 					local currentCP2 = racer2 and (racer2:GetAttribute("Checkpoint") or 0) or 0
-					local totalCP2  = _G.myRace and _G.myRace:FindFirstChild("Checkpoints") and _G.myRace.Checkpoints.Value or 12
+					local totalCP2   = _G.myRace and _G.myRace:FindFirstChild("Checkpoints") and _G.myRace.Checkpoints.Value or 12
 					local isFinished = currentCP2 >= totalCP2
 
 					if hum and not hum.Sit and _G.myCar and _G.myCar.Parent and not isFinished then
@@ -397,11 +510,46 @@ local function runSubLoops()
 			end)
 		end
 	end)
+
+	-- Vòng lặp 3: ANTI-AFK KICK (bypass kick 20 phút không hoạt động)
+	task.spawn(function()
+		local VirtualUser = game:GetService("VirtualUser")
+		while task.wait(60) do
+			-- Cách 1: VirtualUser simulate click (mạnh nhất, bypass mọi AFK detector)
+			pcall(function()
+				VirtualUser:CaptureController()
+				VirtualUser:ClickButton2(Vector2.new(0, 0))
+				VirtualUser:Button2Up(Vector2.new(0, 0))
+			end)
+			-- Cách 2: Simulate humanoid state để Roblox coi là còn active
+			pcall(function()
+				if player.Character then
+					local hum = player.Character:FindFirstChildOfClass("Humanoid")
+					if hum then
+						hum:ChangeState(Enum.HumanoidStateType.Running)
+					end
+				end
+			end)
+			-- Cách 3: Reset idle timer thông qua CameraType
+			pcall(function()
+				local cam = workspace.CurrentCamera
+				if cam then
+					local prev = cam.CameraType
+					cam.CameraType = Enum.CameraType.Watch
+					task.wait()
+					cam.CameraType = prev
+				end
+			end)
+			print("[AFK] ð¢ Anti-AFK ping @ " .. os.date("%H:%M:%S"))
+		end
+	end)
 end
 
+-- âââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
+-- KHá»I CHáº Y
 -- ══════════════════════════════════════════════════════════════
--- KHỞI CHẠY
--- ══════════════════════════════════════════════════════════════
+
+print("[Rejoin] 💾 Đã lưu server: PlaceId=" .. tostring(_G.savedPlaceId) .. " | JobId=" .. tostring(_G.savedServerId))
 
 fixLag()
 waitForGameLoad()
@@ -421,6 +569,9 @@ end
 
 loaded = true
 
+-- Khởi động monitor rejoin
+startRejoinMonitor()
+
 -- Vòng lặp Auto Farm
 task.spawn(function()
 	while task.wait() do
@@ -433,7 +584,7 @@ end)
 runSubLoops()
 
 -- ══════════════════════════════════════════════════════════════
--- PHẦN 7: GỬI DỮ LIỆU CASH LIÊN TỤC (HEARTBEAT + ON CHANGE)
+-- PHẦN 8: GỬI DỮ LIỆU CASH LIÊN TỤC (HEARTBEAT + ON CHANGE)
 -- ══════════════════════════════════════════════════════════════
 
 -- Gửi ngay khi Cash thay đổi
@@ -452,4 +603,4 @@ task.spawn(function()
 	end
 end)
 
-print("[System] 🚀 Script đã khởi chạy hoàn tất! HTTP gửi dữ liệu & Chống văng xe đều hoạt động.")
+print("[System] 🚀 Script đã khởi chạy hoàn tất! Rejoin server VIP & Chống văng xe đều hoạt động.")
