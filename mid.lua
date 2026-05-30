@@ -693,18 +693,13 @@ local function runSubLoops()
 
 			-- Đang theo dõi → kiểm tra racer còn trong trận không
 			elseif wasInRace and trackedRace and not finishCooldown then
-				local racer = trackedRace.Racers:FindFirstChild(player.Name)
-				local totalCP = trackedRace:FindFirstChild("Checkpoints") and trackedRace.Checkpoints.Value or 12
+			local racer = trackedRace.Racers:FindFirstChild(player.Name)
 
 				local finished = false
 				if not racer then
-					-- Server đã xoá racer → về đích thật sự
+					-- Server đã xoá racer khỏi Racers → về đích thật sự
 					finished = true
 					print("[RaceWatch] ✅ Racer bị xoá khỏi Racers → Về đích xác nhận!")
-				elseif racer:GetAttribute("Checkpoint") and racer:GetAttribute("Checkpoint") >= totalCP then
-					-- Checkpoint đạt tổng số → xong trận
-					finished = true
-					print("[RaceWatch] ✅ Checkpoint đạt tối đa → Về đích xác nhận!")
 				end
 
 				if finished and not isResettingForReset then
