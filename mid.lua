@@ -371,7 +371,17 @@ local function mainAutoFarm()
 		return
 	end
 
+	-- Kiểm tra đang trong trận đua chưa
+	local activeRace = _G.myRace or findMyRace()
+
 	if not gui:FindFirstChild("A-Chassis Interface") then
+		-- KHÔNG spawn khi đang trong trận đua (A-Chassis có thể tạm mất trong 1 frame)
+		if activeRace then
+			spawnAttemptCount = 0
+			spawnAttemptStart = 0
+			return
+		end
+
 		local now = tick()
 		if spawnAttemptCount == 0 then
 			spawnAttemptStart = now
