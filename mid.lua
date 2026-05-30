@@ -515,32 +515,41 @@ local function runSubLoops()
 	task.spawn(function()
 		local VirtualUser = game:GetService("VirtualUser")
 		while task.wait(60) do
-			-- Cách 1: VirtualUser simulate click (mạnh nhất, bypass mọi AFK detector)
+			local isRacing = (_G.myRace ~= nil)
+
+			-- Cách 1: VirtualUser simulate click
+			-- An toàn 100%, chạy cả khi đang đua vì không ảnh hưởng xe/humanoid
 			pcall(function()
 				VirtualUser:CaptureController()
 				VirtualUser:ClickButton2(Vector2.new(0, 0))
 				VirtualUser:Button2Up(Vector2.new(0, 0))
 			end)
-			-- Cách 2: Simulate humanoid state để Roblox coi là còn active
-			pcall(function()
-				if player.Character then
-					local hum = player.Character:FindFirstChildOfClass("Humanoid")
-					if hum then
-						hum:ChangeState(Enum.HumanoidStateType.Running)
+
+			-- Cách 2 & 3: Chỉ chạy khi KHÔNG đua
+			-- ChangeState và CameraType gây rớt ghế / interrupt checkpoint khi đang đua
+			if not isRacing then
+				-- Cách 2: Simulate humanoid state
+				pcall(function()
+					if player.Character then
+						local hum = player.Character:FindFirstChildOfClass("Humanoid")
+						if hum then
+							hum:ChangeState(Enum.HumanoidStateType.Running)
+						end
 					end
-				end
-			end)
-			-- Cách 3: Reset idle timer thông qua CameraType
-			pcall(function()
-				local cam = workspace.CurrentCamera
-				if cam then
-					local prev = cam.CameraType
-					cam.CameraType = Enum.CameraType.Watch
-					task.wait()
-					cam.CameraType = prev
-				end
-			end)
-			print("[AFK] ð¢ Anti-AFK ping @ " .. os.date("%H:%M:%S"))
+				end)
+				-- Cách 3: Reset idle timer thông qua CameraType
+				pcall(function()
+					local cam = workspace.CurrentCamera
+					if cam then
+						local prev = cam.CameraType
+						cam.CameraType = Enum.CameraType.Watch
+						task.wait()
+						cam.CameraType = prev
+					end
+				end)
+			end
+
+			print("[AFK] ð¢ Anti-AFK ping @ " .. os.date("%H:%M:%S") .. (isRacing and " (safe mode - đang đua)" or ""))
 		end
 	end)
 end
