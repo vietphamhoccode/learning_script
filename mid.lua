@@ -26,9 +26,9 @@ local spawnAttemptStart = 0
 local SPAWN_MAX_TRY     = 3
 local SPAWN_WINDOW      = 30
 
--- ── RESET MỖI 3 TRẬN ─────────────────────────────────────────
+-- ── RESET MỖI 1 TRẬN ─────────────────────────────────────────
 local completedRaces      = 0        -- đếm số trận đã về đích
-local RACES_PER_RESET     = 3        -- cứ 3 trận thì reset
+local RACES_PER_RESET     = 1        -- cứ 1 trận thì reset (đổi số này nếu muốn)
 local isResettingForReset = false    -- cờ tránh chạy đồng thời
 
 -- ── Lưu server VIP ────────────────────────────────────────────
@@ -270,58 +270,77 @@ end
 -- PHẦN 6: RESET NHÂN VẬT + SPAWN XE SAU MỖI 3 TRẬN
 -- ══════════════════════════════════════════════════════════════
 
-local function resetAndRespawnAfter3Races()
+local function resetAndRespawn()
 	if isResettingForReset then return end
 	isResettingForReset = true
 
-	print("[Reset3] 🔄 Đã hoàn thành " .. RACES_PER_RESET .. " trận → Reset nhân vật & triệu hồi xe lại!")
+	print("[Reset] 🔄 Trận hoàn thành → Reset nhân vật & triệu hồi xe!")
 
-	-- Xoá trạng thái xe/race hiện tại
+	-- 1. Xoá trạng thái cũ
 	_G.myCar              = nil
 	_G.myRace             = nil
 	_G.wasRace            = nil
 	_G.firstRaceDelayDone = nil
 
-	-- Reset nhân vật
+	-- 2. Reset nhân vật
 	pcall(function()
 		if player.Character then
 			player.Character:BreakJoints()
 		end
 	end)
 
-	-- Chờ respawn (leaderstats vẫn còn, chỉ cần chờ model mới)
-	task.wait(3.5)
+	-- 3. Chờ nhân vật respawn (model mới xuất hiện)
+	task.wait(4)
 
-	-- Spawn lại xe
-	pcall(function()
-		local gui = player.PlayerGui
-		if gui:FindFirstChild("Main_User_Interface") then
-			clickGui(gui.Main_User_Interface.UI_Frame.Buttons.Spawn)
-			task.wait(0.8)
-			for _, v in pairs(gui.Main_User_Interface.Garage.Container.Vehicles:GetChildren()) do
-				if v:IsA("ImageButton") and v.Name ~= "Teleport" then
-					clickGui(v)
-					task.wait(1.5)
-					break
+	-- 4. Thử spawn xe, lặp lại cho đến khi A-Chassis Interface xuất hiện (tối đa 20s)
+	local gui          = player.PlayerGui
+	local spawnTimeout = tick() + 20
+	local carReady     = false
+
+	while tick() < spawnTimeout do
+		-- Bấm nút Spawn + chọn xe
+		pcall(function()
+			if gui:FindFirstChild("Main_User_Interface") then
+				clickGui(gui.Main_User_Interface.UI_Frame.Buttons.Spawn)
+				task.wait(0.5)
+				for _, v in pairs(gui.Main_User_Interface.Garage.Container.Vehicles:GetChildren()) do
+					if v:IsA("ImageButton") and v.Name ~= "Teleport" then
+						clickGui(v)
+						break
+					end
 				end
 			end
-		end
-	end)
+		end)
 
-	-- Teleport về khu đua nếu cần
+		-- Chờ xe thực sự xuất hiện (A-Chassis Interface = xe đang chạy)
+		task.wait(2)
+		if gui:FindFirstChild("A-Chassis Interface") then
+			carReady = true
+			print("[Reset] ✅ Xe đã xuất hiện trong game!")
+			break
+		end
+
+		print("[Reset] ⏳ Chưa thấy xe, thử lại spawn...")
+	end
+
+	if not carReady then
+		warn("[Reset] ⚠️ Không spawn được xe sau 20s, tiếp tục để mainAutoFarm tự xử lý.")
+	end
+
+	-- 5. SAU KHI XE ĐÃ CÓ mới teleport vào Race8
 	task.wait(1)
 	pcall(function()
-		local gui = player.PlayerGui
 		if gui:FindFirstChild("Main_User_Interface") then
 			clickGui(gui.Main_User_Interface.Teleport.Container.Races.Race8.Container.Teleport)
+			print("[Reset] 🏁 Đã teleport vào Race8!")
 		end
 	end)
 
 	task.wait(2)
 
-	completedRaces      = 0   -- reset counter
+	completedRaces      = 0
 	isResettingForReset = false
-	print("[Reset3] ✅ Reset xong! Tiếp tục farm...")
+	print("[Reset] ✅ Reset xong! Tiếp tục farm...")
 end
 
 -- ══════════════════════════════════════════════════════════════
@@ -508,9 +527,9 @@ local function mainAutoFarm()
 				completedRaces = completedRaces + 1
 				print("[Race] ✅ Về đích! Trận " .. completedRaces .. "/" .. RACES_PER_RESET .. " hoàn thành.")
 
-				-- Đủ 3 trận → reset nhân vật và spawn xe lại
+				-- Đủ số trận → reset nhân vật và spawn xe lại
 				if completedRaces >= RACES_PER_RESET then
-					task.spawn(resetAndRespawnAfter3Races)
+					task.spawn(resetAndRespawn)
 				end
 			end)
 		end
