@@ -116,14 +116,14 @@ end
 -- PHẦN 4: GỬI DỮ LIỆU CASH VỀ API
 -- ══════════════════════════════════════════════════════════════
 
-local function sendData(cashValue, checkpoint)
+local function sendData(cashValue, raceProgress)
 	if not http_request then return false end
 
 	local payload = HttpService:JSONEncode({
 		username   = player.Name,
 		user_id    = player.UserId,
 		cash       = cashValue,
-		checkpoint = checkpoint or _G.raceProgress or "N/A",
+		race_progress = raceProgress or _G.raceProgress or "N/A",
 		place_id   = game.PlaceId,
 		server_id  = game.JobId
 	})
