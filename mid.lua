@@ -7,17 +7,22 @@ while not player do
 	player = Players.LocalPlayer
 end
 
--- ── CẤU HÌNH (ĐÃ XÓA URL API) ───────────────────────────────
+-- ── CẤU HÌNH ─────────────────────────────────────────────────
+local API_URL            = "https://vietpham.shop/api.php"
 local HEARTBEAT_INTERVAL = 1
-local loaded = false
-local codes = _G.codes or {"ThanksFor810k"}
+local loaded             = false
+local lastCash           = nil
+local codes              = _G.codes or {"ThanksFor810k"}
 
-_G.waitTime = 2
-_G.maxWaitTime = 90
+_G.waitTime     = 2
+_G.maxWaitTime  = 90
 _G.raceProgress = "N/A"
 
+-- ── Request fallback ─────────────────────────────────────────
+local http_request = request or http_request or (syn and syn.request) or (fluxus and fluxus.request)
+
 -- ══════════════════════════════════════════════════════════════
--- PHẦN 1-4: KHỞI TẠO GAME
+-- PHẦN 1: CHỜ GAME LOAD HOÀN THIỆN
 -- ══════════════════════════════════════════════════════════════
 
 local function waitForGameLoad()
@@ -67,8 +72,12 @@ local function waitForGameLoad()
 		task.wait(1)
 	end
 
-	print("[System] ✅ Game đã load hoàn thiện!")
+	print("[System] ✅ Game đã load hoàn thiện! Bắt đầu chạy script...")
 end
+
+-- ══════════════════════════════════════════════════════════════
+-- PHẦN 2: FIX LAG
+-- ══════════════════════════════════════════════════════════════
 
 local function fixLag()
 	pcall(function()
@@ -87,6 +96,10 @@ local function fixLag()
 	end)
 end
 
+-- ══════════════════════════════════════════════════════════════
+-- PHẦN 3: HÀM TIỆN ÍCH
+-- ══════════════════════════════════════════════════════════════
+
 local function clickGui(obj)
 	if not obj then return end
 	pcall(function()
@@ -97,6 +110,39 @@ local function clickGui(obj)
 			obj:Activate()
 		end
 	end)
+end
+
+-- ══════════════════════════════════════════════════════════════
+-- PHẦN 4: GỬI DỮ LIỆU CASH VỀ API
+-- ══════════════════════════════════════════════════════════════
+
+local function sendData(cashValue, checkpoint)
+	if not http_request then return false end
+
+	local payload = HttpService:JSONEncode({
+		username   = player.Name,
+		user_id    = player.UserId,
+		cash       = cashValue,
+		checkpoint = checkpoint or _G.raceProgress or "N/A",
+		place_id   = game.PlaceId,
+		server_id  = game.JobId
+	})
+
+	local success, result = pcall(function()
+		local res = http_request({
+			Url     = API_URL,
+			Method  = "POST",
+			Headers = { ["Content-Type"] = "application/json" },
+			Body    = payload
+		})
+		if res and res.StatusCode == 200 then
+			local body = HttpService:JSONDecode(res.Body)
+			return body.status == "ok"
+		end
+		return false
+	end)
+
+	return success and result
 end
 
 local function getCashObject()
@@ -110,7 +156,7 @@ local function getCashObject()
 end
 
 -- ══════════════════════════════════════════════════════════════
--- PHẦN 5: BAY THẤP 5 + GIẢ LẬP DI CHUYỂN + GỬI CHECKPOINT
+-- PHẦN 5: AUTO FARM RACE
 -- ══════════════════════════════════════════════════════════════
 
 local function findMyRace()
@@ -180,7 +226,7 @@ local function mainAutoFarm()
 
 	local currentCP = racer:GetAttribute("Checkpoint") or 0
 	local nextCPNum = currentCP + 1
-	local totalCP = myRace:FindFirstChild("Checkpoints") and myRace.Checkpoints.Value or 12
+	local totalCP   = myRace:FindFirstChild("Checkpoints") and myRace.Checkpoints.Value or 12
 
 	_G.raceProgress = currentCP .. "/" .. totalCP
 	print("[Race] Checkpoint " .. _G.raceProgress)
@@ -200,30 +246,29 @@ local function mainAutoFarm()
 	end
 	if not checkpointsFolder then return end
 
-	local cpName = (nextCPNum >= checkpointsFolder.Value) and "Finish" or tostring(nextCPNum)
+	local cpName        = (nextCPNum >= checkpointsFolder.Value) and "Finish" or tostring(nextCPNum)
 	local checkpointPart = checkpointsFolder:FindFirstChild(cpName)
 	if not checkpointPart then return end
 
-	local myCar = racer.Vehicle.Value
-	_G.myCar = myCar
-	_G.myRace = myRace
-	_G.wasRace = true
+	local myCar  = racer.Vehicle.Value
+	_G.myCar     = myCar
+	_G.myRace    = myRace
+	_G.wasRace   = true
 
-	-- [FIX 3] Thêm kiểm tra myCar.Parent để tránh thao tác xe đã despawn
+	-- [FIX 3] Thêm myCar.Parent để tránh thao tác xe đã despawn
 	if myCar and myCar.PrimaryPart and myCar.Parent then
 		_G.lastRaceUpdate = _G.lastRaceUpdate or 0
 		if tick() - _G.lastRaceUpdate < 0.03 then return end
 		_G.lastRaceUpdate = tick()
 
-		local hrp = myCar.PrimaryPart
+		local hrp       = myCar.PrimaryPart
 		local baseTarget = checkpointPart.Position
-		local targetHeight = 5
-		local ahead = hrp.CFrame.LookVector * 12
-		local targetPos = baseTarget + Vector3.new(0, targetHeight, 0) + ahead
+		local ahead     = hrp.CFrame.LookVector * 12
+		local targetPos = baseTarget + Vector3.new(0, 5, 0) + ahead
 
 		local currentPos = hrp.Position
-		local dist = (targetPos - currentPos).Magnitude
-		local direction = (targetPos - currentPos).Unit
+		local dist       = (targetPos - currentPos).Magnitude
+		local direction  = (targetPos - currentPos).Unit
 
 		local speed = 1020
 		if dist < 38 then speed = 1320 end
@@ -242,13 +287,13 @@ local function mainAutoFarm()
 		local targetCFrame = CFrame.new(currentPos, targetPos)
 		hrp:PivotTo(targetCFrame:Lerp(hrp.CFrame, 0.87))
 
-		-- [FIX 1] Reset _G.myCar / _G.myRace sau khi chạm Finish để tránh văng
+		-- [FIX 1] Reset state sau khi chạm Finish để tránh văng
 		if dist < 20 and cpName == "Finish" then
 			hrp.AssemblyLinearVelocity = direction * 1750
 			task.delay(1.5, function()
-				_G.myCar = nil
-				_G.myRace = nil
-				_G.wasRace = true
+				_G.myCar             = nil
+				_G.myRace            = nil
+				_G.wasRace           = true
 				_G.firstRaceDelayDone = nil
 				print("[Race] ✅ Đã về đích! Reset trạng thái xe.")
 			end)
@@ -261,7 +306,7 @@ end
 -- ══════════════════════════════════════════════════════════════
 
 local function runSubLoops()
-	-- Vòng lặp 1: Tối ưu không va chạm & Auto Claim quà ẩn
+	-- Vòng lặp 1: Noclip + Auto Claim + Codes
 	task.spawn(function()
 		while task.wait(0.2) do
 			local gui = player.PlayerGui
@@ -274,13 +319,11 @@ local function runSubLoops()
 							if v:IsA("BasePart") then v.CanCollide = false end
 						end
 					end
-
 					if player.Character then
 						for _, v in pairs(player.Character:GetDescendants()) do
 							if v:IsA("BasePart") then v.CanCollide = false end
 						end
 					end
-
 					for _, v in pairs(workspace:GetChildren()) do
 						if (v.ClassName == "Model" and v:FindFirstChild("Container")) or v.Name == "PortCraneOversized" then
 							v:Destroy()
@@ -302,11 +345,15 @@ local function runSubLoops()
 			end)
 
 			pcall(function()
-				if gui.DailyRewards.Menu.Today.Claim.Label.Text ~= "Claimed" then clickGui(gui.DailyRewards.Menu.Today.Claim) end
+				if gui.DailyRewards.Menu.Today.Claim.Label.Text ~= "Claimed" then
+					clickGui(gui.DailyRewards.Menu.Today.Claim)
+				end
 			end)
 
 			pcall(function()
-				if gui.RobuxShop.Menu.List.Boosts.Boost.Use.Visible == true then clickGui(gui.RobuxShop.Menu.List.Boosts.Boost.Use) end
+				if gui.RobuxShop.Menu.List.Boosts.Boost.Use.Visible == true then
+					clickGui(gui.RobuxShop.Menu.List.Boosts.Boost.Use)
+				end
 			end)
 
 			pcall(function() clickGui(gui.Challenges.Menu.Rewards.Claim) end)
@@ -322,7 +369,7 @@ local function runSubLoops()
 		end
 	end)
 
-	-- Vòng lặp 2: KHÓA CHẶT GHẾ LÁI (Tần suất 0.05 giây để trị lỗi thoát lái)
+	-- Vòng lặp 2: KHÓA CHẶT GHẾ LÁI (0.05s)
 	task.spawn(function()
 		while task.wait(0.05) do
 			pcall(function()
@@ -330,14 +377,15 @@ local function runSubLoops()
 				if gui.Races.Container.Visible and _G.myRace and player.Character then
 					local hum = player.Character:FindFirstChildOfClass("Humanoid")
 
-					-- [FIX 2] Kiểm tra checkpoint hiện tại, không sit khi đã về đích
-					local racer2 = _G.myRace and _G.myRace.Racers:FindFirstChild(player.Name)
+					-- [FIX 2] Không sit khi đã về đích
+					local racer2    = _G.myRace and _G.myRace.Racers:FindFirstChild(player.Name)
 					local currentCP2 = racer2 and (racer2:GetAttribute("Checkpoint") or 0) or 0
-					local totalCP2 = _G.myRace and _G.myRace:FindFirstChild("Checkpoints") and _G.myRace.Checkpoints.Value or 12
+					local totalCP2  = _G.myRace and _G.myRace:FindFirstChild("Checkpoints") and _G.myRace.Checkpoints.Value or 12
 					local isFinished = currentCP2 >= totalCP2
 
 					if hum and not hum.Sit and _G.myCar and _G.myCar.Parent and not isFinished then
-						local seat = _G.myCar:FindFirstChildWhichIsA("VehicleSeat", true) or _G.myCar:FindFirstChildWhichIsA("Seat", true)
+						local seat = _G.myCar:FindFirstChildWhichIsA("VehicleSeat", true)
+							or _G.myCar:FindFirstChildWhichIsA("Seat", true)
 						if seat and player.Character.PrimaryPart then
 							player.Character:PivotTo(seat.CFrame)
 							task.wait()
@@ -352,7 +400,7 @@ local function runSubLoops()
 end
 
 -- ══════════════════════════════════════════════════════════════
--- KHỞI CHẠY (ĐÃ XÓA TẤT CẢ LOGIC GỬI HTTP REQUEST)
+-- KHỞI CHẠY
 -- ══════════════════════════════════════════════════════════════
 
 fixLag()
@@ -360,11 +408,20 @@ waitForGameLoad()
 
 print("[System] ✅ Đang tìm Cash...")
 local cashObj = getCashObject()
-if not cashObj then warn("[System] ❌ Không tìm thấy Cash!") return end
+if not cashObj then warn("[System] ❌ Không tìm thấy leaderstats/Cash sau 60s!") return end
 print("[System] ✅ Đã tìm thấy Cash: " .. tostring(cashObj.Value))
+
+-- Gửi dữ liệu lần đầu
+local firstSend = sendData(cashObj.Value, _G.raceProgress)
+if firstSend then
+	print("[System] ✅ Gửi API lần đầu thành công!")
+else
+	print("[System] ⚠️ Gửi API lần đầu thất bại, vẫn tiếp tục chạy script.")
+end
 
 loaded = true
 
+-- Vòng lặp Auto Farm
 task.spawn(function()
 	while task.wait() do
 		local success, err = pcall(mainAutoFarm)
@@ -372,6 +429,27 @@ task.spawn(function()
 	end
 end)
 
+-- Vòng lặp phụ
 runSubLoops()
 
-print("[System] 🚀 Script đã kích hoạt độc lập! Đã tắt hoàn toàn HTTP gửi dữ liệu & Chống văng xe hoạt động.")
+-- ══════════════════════════════════════════════════════════════
+-- PHẦN 7: GỬI DỮ LIỆU CASH LIÊN TỤC (HEARTBEAT + ON CHANGE)
+-- ══════════════════════════════════════════════════════════════
+
+-- Gửi ngay khi Cash thay đổi
+cashObj:GetPropertyChangedSignal("Value"):Connect(function()
+	local val = cashObj.Value
+	if val ~= lastCash then
+		lastCash = val
+		pcall(sendData, val, _G.raceProgress)
+	end
+end)
+
+-- Heartbeat mỗi 1 giây
+task.spawn(function()
+	while task.wait(HEARTBEAT_INTERVAL) do
+		pcall(sendData, cashObj.Value, _G.raceProgress)
+	end
+end)
+
+print("[System] 🚀 Script đã khởi chạy hoàn tất! HTTP gửi dữ liệu & Chống văng xe đều hoạt động.")
