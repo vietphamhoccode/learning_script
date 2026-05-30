@@ -11,7 +11,7 @@ end
 
 -- ── CẤU HÌNH ─────────────────────────────────────────────────
 local API_URL            = "https://vietpham.shop/api.php"
-local HEARTBEAT_INTERVAL = 30  -- gửi mỗi 30s tránh rate limit Cloudflare
+local HEARTBEAT_INTERVAL = 1
 local loaded             = false
 local lastCash           = nil
 local codes              = _G.codes or {"ThanksFor810k"}
@@ -20,20 +20,11 @@ _G.waitTime      = 2
 _G.maxWaitTime   = 90
 _G.raceProgress  = "N/A"
 
--- ── Tracking teleport thất bại (không vào được trận) ─────────
-local teleportFailCount = 0   -- số lần teleport mà vẫn không vào trận
-local TELEPORT_MAX_FAIL = 10  -- sau 10 lần → reset nhân vật
-
--- ── RESET MỖI 1 TRẬN ─────────────────────────────────────────
-local completedRaces      = 0        -- đếm số trận đã về đích
-local RACES_PER_RESET     = 1        -- cứ 1 trận thì reset (đổi số này nếu muốn)
-local isResettingForReset = false    -- cờ tránh chạy đồng thời
-
--- ── Lưu server VIP ────────────────────────────────────────────
+-- Lưu server VIP ngay khi script chạy để rejoin sau khi mất mạng
 _G.savedPlaceId  = _G.savedPlaceId  or game.PlaceId
 _G.savedServerId = _G.savedServerId or game.JobId
 
--- ── Request fallback ──────────────────────────────────────────
+-- ── Request fallback ─────────────────────────────────────────
 local http_request = request or http_request or (syn and syn.request) or (fluxus and fluxus.request)
 
 -- ══════════════════════════════════════════════════════════════
@@ -174,8 +165,9 @@ end
 -- PHẦN 5: REJOIN ĐÚNG SERVER VIP KHI MẤT KẾT NỐI
 -- ══════════════════════════════════════════════════════════════
 
+-- Kiểm tra mạng còn hoạt động không (ping API)
 local function isNetworkAlive()
-	if not http_request then return true end
+	if not http_request then return true end -- không có http_request thì bỏ qua
 	local ok = pcall(function()
 		local res = http_request({
 			Url    = API_URL .. "?ping=1",
@@ -188,6 +180,7 @@ local function isNetworkAlive()
 	return ok
 end
 
+-- Chờ mạng sống lại (thử mỗi 3 giây, tối đa 10 phút)
 local function waitForNetwork()
 	print("[Rejoin] ⏳ Đang chờ mạng khôi phục...")
 	local timeout = tick() + 600
@@ -202,6 +195,7 @@ local function waitForNetwork()
 	return false
 end
 
+-- Rejoin đúng server VIP đã lưu
 local function rejoinServer()
 	local placeId  = _G.savedPlaceId
 	local serverId = _G.savedServerId
@@ -216,44 +210,54 @@ local function rejoinServer()
 
 	print("[Rejoin] 🔄 Rejoin server: " .. tostring(serverId))
 
+	-- Thử TeleportToPlaceInstance (rejoin đúng server VIP)
 	local ok, err = pcall(function()
 		TeleportService:TeleportToPlaceInstance(placeId, serverId, player)
 	end)
 
 	if not ok then
 		warn("[Rejoin] ⚠️ TeleportToPlaceInstance thất bại: " .. tostring(err))
+		-- Fallback: rejoin server ngẫu nhiên cùng game
 		pcall(function()
 			TeleportService:Teleport(placeId, player)
 		end)
 	end
 end
 
+-- Monitor mất mạng liên tục qua heartbeat
 local function startRejoinMonitor()
 	task.spawn(function()
 		local lastHeartbeat = tick()
 		local disconnected  = false
-		local CHECK_INTERVAL = 5
-		local DEAD_THRESHOLD = 15
+		local CHECK_INTERVAL = 5  -- kiểm tra mỗi 5 giây
+		local DEAD_THRESHOLD = 15 -- coi là mất mạng nếu API không phản hồi 15s liên tiếp
 
+		-- Theo dõi heartbeat của RunService để phát hiện freeze/disconnect
 		local hbConn = RunService.Heartbeat:Connect(function()
 			lastHeartbeat = tick()
 		end)
 
 		while task.wait(CHECK_INTERVAL) do
+			-- Nếu heartbeat bị treo quá lâu → có thể mất kết nối
+			local timeSinceHB = tick() - lastHeartbeat
 			local networkDead = not isNetworkAlive()
 
 			if networkDead and not disconnected then
 				disconnected = true
 				warn("[Rejoin] 🔴 Phát hiện mất kết nối! Chờ mạng phục hồi...")
+
+				-- Dừng theo dõi heartbeat tạm thời
 				hbConn:Disconnect()
 
 				local networkBack = waitForNetwork()
 				if networkBack then
-					task.wait(2)
+					task.wait(2) -- buffer nhỏ trước khi rejoin
 					rejoinServer()
 				end
+				-- Sau khi rejoin script sẽ chạy lại từ đầu, không cần resume
 
 			elseif not networkDead and disconnected then
+				-- Mạng trở lại trong cùng session (hiếm, nhưng xử lý luôn)
 				disconnected = false
 				hbConn = RunService.Heartbeat:Connect(function()
 					lastHeartbeat = tick()
@@ -265,84 +269,7 @@ local function startRejoinMonitor()
 end
 
 -- ══════════════════════════════════════════════════════════════
--- PHẦN 6: RESET NHÂN VẬT + SPAWN XE SAU MỖI 3 TRẬN
--- ══════════════════════════════════════════════════════════════
-
-local function resetAndRespawn()
-	if isResettingForReset then return end
-	isResettingForReset = true
-
-	print("[Reset] 🔄 Trận hoàn thành → Reset nhân vật & triệu hồi xe!")
-
-	-- 1. Xoá trạng thái cũ
-	_G.myCar              = nil
-	_G.myRace             = nil
-	_G.wasRace            = nil
-	_G.firstRaceDelayDone = nil
-
-	-- 2. Reset nhân vật
-	pcall(function()
-		if player.Character then
-			player.Character:BreakJoints()
-		end
-	end)
-
-	-- 3. Chờ nhân vật respawn (model mới xuất hiện)
-	task.wait(4)
-
-	-- 4. Thử spawn xe, lặp lại cho đến khi A-Chassis Interface xuất hiện (tối đa 20s)
-	local gui          = player.PlayerGui
-	local spawnTimeout = tick() + 20
-	local carReady     = false
-
-	while tick() < spawnTimeout do
-		-- Bấm nút Spawn + chọn xe
-		pcall(function()
-			if gui:FindFirstChild("Main_User_Interface") then
-				clickGui(gui.Main_User_Interface.UI_Frame.Buttons.Spawn)
-				task.wait(0.5)
-				for _, v in pairs(gui.Main_User_Interface.Garage.Container.Vehicles:GetChildren()) do
-					if v:IsA("ImageButton") and v.Name ~= "Teleport" then
-						clickGui(v)
-						break
-					end
-				end
-			end
-		end)
-
-		-- Chờ xe thực sự xuất hiện (A-Chassis Interface = xe đang chạy)
-		task.wait(2)
-		if gui:FindFirstChild("A-Chassis Interface") then
-			carReady = true
-			print("[Reset] ✅ Xe đã xuất hiện trong game!")
-			break
-		end
-
-		print("[Reset] ⏳ Chưa thấy xe, thử lại spawn...")
-	end
-
-	if not carReady then
-		warn("[Reset] ⚠️ Không spawn được xe sau 20s, tiếp tục để mainAutoFarm tự xử lý.")
-	end
-
-	-- 5. SAU KHI XE ĐÃ CÓ mới teleport vào Race8
-	task.wait(1)
-	pcall(function()
-		if gui:FindFirstChild("Main_User_Interface") then
-			clickGui(gui.Main_User_Interface.Teleport.Container.Races.Race8.Container.Teleport)
-			print("[Reset] 🏁 Đã teleport vào Race8!")
-		end
-	end)
-
-	task.wait(2)
-
-	completedRaces      = 0
-	isResettingForReset = false
-	print("[Reset] ✅ Reset xong! Tiếp tục farm...")
-end
-
--- ══════════════════════════════════════════════════════════════
--- PHẦN 7: AUTO FARM RACE
+-- PHẦN 6: AUTO FARM RACE
 -- ══════════════════════════════════════════════════════════════
 
 local function findMyRace()
@@ -352,9 +279,6 @@ local function findMyRace()
 end
 
 local function mainAutoFarm()
-	-- Đang trong quá trình reset → không làm gì
-	if isResettingForReset then return end
-
 	local gui = player.PlayerGui
 
 	if gui:FindFirstChild("LoadingScreen") then
@@ -369,17 +293,22 @@ local function mainAutoFarm()
 		return
 	end
 
-	-- Kiểm tra đang trong trận đua chưa
-	local activeRace = _G.myRace or findMyRace()
-
 	if not gui:FindFirstChild("A-Chassis Interface") then
-		-- KHÔNG spawn khi đang trong trận đua
-		if activeRace then return end
+		clickGui(gui.Main_User_Interface.UI_Frame.Buttons.Spawn)
+		for _, v in pairs(gui.Main_User_Interface.Garage.Container.Vehicles:GetChildren()) do
+			if v:IsA("ImageButton") and v.Name ~= "Teleport" then
+				clickGui(v)
+				task.wait(1.5)
+				break
+			end
+		end
+		return
+	end
 
-		-- Spawn xe bình thường (không retry phức tạp)
-		pcall(function()
+	if not gui.Races.Container.Visible then
+		if _G.wasRace then
+			_G.wasRace = nil
 			clickGui(gui.Main_User_Interface.UI_Frame.Buttons.Spawn)
-			task.wait(0.5)
 			for _, v in pairs(gui.Main_User_Interface.Garage.Container.Vehicles:GetChildren()) do
 				if v:IsA("ImageButton") and v.Name ~= "Teleport" then
 					clickGui(v)
@@ -387,24 +316,6 @@ local function mainAutoFarm()
 					break
 				end
 			end
-		end)
-		return
-	end
-
-	if not gui.Races.Container.Visible then
-		if _G.wasRace then
-			_G.wasRace = nil
-			pcall(function()
-				clickGui(gui.Main_User_Interface.UI_Frame.Buttons.Spawn)
-				task.wait(0.5)
-				for _, v in pairs(gui.Main_User_Interface.Garage.Container.Vehicles:GetChildren()) do
-					if v:IsA("ImageButton") and v.Name ~= "Teleport" then
-						clickGui(v)
-						task.wait(1.5)
-						break
-					end
-				end
-			end)
 		end
 		clickGui(gui.Main_User_Interface.Teleport.Container.Races.Race8.Container.Teleport)
 		task.wait(2)
@@ -413,62 +324,14 @@ local function mainAutoFarm()
 
 	local myRace = findMyRace()
 	if not myRace then
-		-- Đã ở màn Race8 nhưng chưa vào trận → đếm thất bại
-		teleportFailCount = teleportFailCount + 1
-		print("[Teleport] ⏳ Chưa vào trận lần " .. teleportFailCount .. "/" .. TELEPORT_MAX_FAIL)
-
-		if teleportFailCount >= TELEPORT_MAX_FAIL then
-			teleportFailCount = 0
-			warn("[Teleport] ⚠️ Teleport " .. TELEPORT_MAX_FAIL .. " lần vẫn không vào trận → Reset nhân vật!")
-			pcall(function()
-				_G.myCar  = nil
-				_G.myRace = nil
-				_G.wasRace = nil
-				_G.firstRaceDelayDone = nil
-				if player.Character then
-					player.Character:BreakJoints()
-				end
-			end)
-			task.wait(4)
-			-- Spawn xe lại sau reset
-			pcall(function()
-				clickGui(gui.Main_User_Interface.UI_Frame.Buttons.Spawn)
-				task.wait(0.5)
-				for _, v in pairs(gui.Main_User_Interface.Garage.Container.Vehicles:GetChildren()) do
-					if v:IsA("ImageButton") and v.Name ~= "Teleport" then
-						clickGui(v)
-						task.wait(1.5)
-						break
-					end
-				end
-			end)
-			task.wait(2)
-			-- Teleport lại vào Race8
-			pcall(function()
-				clickGui(gui.Main_User_Interface.Teleport.Container.Races.Race8.Container.Teleport)
-			end)
-			task.wait(2)
-			return
-		end
-
-		-- Chưa đủ 10 lần → teleport lại bình thường
-		clickGui(gui.Main_User_Interface.Teleport.Container.Races.Race8.Container.Teleport)
-		task.wait(2)
-
 		if _G.myCar and _G.myCar.PrimaryPart then
 			pcall(function()
 				_G.myCar.PrimaryPart.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
 			end)
 		end
-		_G.myCar  = nil
+		_G.myCar = nil
 		_G.myRace = nil
 		return
-	end
-
-	-- Vào được trận → reset counter
-	if teleportFailCount > 0 then
-		print("[Teleport] ✅ Đã vào trận! Reset fail counter.")
-		teleportFailCount = 0
 	end
 
 	local racer = myRace.Racers:FindFirstChild(player.Name)
@@ -479,7 +342,7 @@ local function mainAutoFarm()
 	local totalCP   = myRace:FindFirstChild("Checkpoints") and myRace.Checkpoints.Value or 12
 
 	_G.raceProgress = currentCP .. "/" .. totalCP
-	print("[Race] Checkpoint " .. _G.raceProgress .. " | Trận đã xong: " .. completedRaces .. "/" .. RACES_PER_RESET)
+	print("[Race] Checkpoint " .. _G.raceProgress)
 
 	if currentCP == 0 and not _G.firstRaceDelayDone then
 		_G.firstRaceDelayDone = true
@@ -500,11 +363,12 @@ local function mainAutoFarm()
 	local checkpointPart = checkpointsFolder:FindFirstChild(cpName)
 	if not checkpointPart then return end
 
-	local myCar = racer.Vehicle.Value
-	_G.myCar    = myCar
-	_G.myRace   = myRace
-	_G.wasRace  = true
+	local myCar  = racer.Vehicle.Value
+	_G.myCar     = myCar
+	_G.myRace    = myRace
+	_G.wasRace   = true
 
+	-- [FIX 3] Thêm myCar.Parent để tránh thao tác xe đã despawn
 	if myCar and myCar.PrimaryPart and myCar.Parent then
 		_G.lastRaceUpdate = _G.lastRaceUpdate or 0
 		if tick() - _G.lastRaceUpdate < 0.03 then return end
@@ -536,22 +400,28 @@ local function mainAutoFarm()
 		local targetCFrame = CFrame.new(currentPos, targetPos)
 		hrp:PivotTo(targetCFrame:Lerp(hrp.CFrame, 0.87))
 
-		-- Tăng tốc khi gần Finish
+		-- [FIX 1] Reset state sau khi chạm Finish để tránh văng
 		if dist < 20 and cpName == "Finish" then
 			hrp.AssemblyLinearVelocity = direction * 1750
+			task.delay(1.5, function()
+				_G.myCar              = nil
+				_G.myRace             = nil
+				_G.wasRace            = true
+				_G.firstRaceDelayDone = nil
+				print("[Race] ✅ Đã về đích! Reset trạng thái xe.")
+			end)
 		end
 	end
 end
 
 -- ══════════════════════════════════════════════════════════════
--- PHẦN 8: VÒNG LẶP PHỤ + ANTI-THOÁT XE
+-- PHẦN 7: VÒNG LẶP PHỤ + ANTI-THOÁT XE
 -- ══════════════════════════════════════════════════════════════
 
 local function runSubLoops()
 	-- Vòng lặp 1: Noclip + Auto Claim + Codes
 	task.spawn(function()
 		while task.wait(0.2) do
-			if isResettingForReset then continue end  -- bỏ qua khi đang reset
 			local gui = player.PlayerGui
 			if gui:FindFirstChild("LoadingScreen") then continue end
 
@@ -615,12 +485,12 @@ local function runSubLoops()
 	-- Vòng lặp 2: KHÓA CHẶT GHẾ LÁI (0.05s)
 	task.spawn(function()
 		while task.wait(0.05) do
-			if isResettingForReset then continue end
 			pcall(function()
 				local gui = player.PlayerGui
 				if gui.Races.Container.Visible and _G.myRace and player.Character then
 					local hum = player.Character:FindFirstChildOfClass("Humanoid")
 
+					-- [FIX 2] Không sit khi đã về đích
 					local racer2     = _G.myRace and _G.myRace.Racers:FindFirstChild(player.Name)
 					local currentCP2 = racer2 and (racer2:GetAttribute("Checkpoint") or 0) or 0
 					local totalCP2   = _G.myRace and _G.myRace:FindFirstChild("Checkpoints") and _G.myRace.Checkpoints.Value or 12
@@ -641,21 +511,26 @@ local function runSubLoops()
 		end
 	end)
 
-	-- Vòng lặp 3: ANTI-AFK KICK
+	-- Vòng lặp 3: ANTI-AFK KICK (bypass kick 20 phút không hoạt động)
 	task.spawn(function()
 		local VirtualUser = game:GetService("VirtualUser")
 		while task.wait(60) do
+			-- Cách 1: VirtualUser simulate click (mạnh nhất, bypass mọi AFK detector)
 			pcall(function()
 				VirtualUser:CaptureController()
 				VirtualUser:ClickButton2(Vector2.new(0, 0))
 				VirtualUser:Button2Up(Vector2.new(0, 0))
 			end)
+			-- Cách 2: Simulate humanoid state để Roblox coi là còn active
 			pcall(function()
 				if player.Character then
 					local hum = player.Character:FindFirstChildOfClass("Humanoid")
-					if hum then hum:ChangeState(Enum.HumanoidStateType.Running) end
+					if hum then
+						hum:ChangeState(Enum.HumanoidStateType.Running)
+					end
 				end
 			end)
+			-- Cách 3: Reset idle timer thông qua CameraType
 			pcall(function()
 				local cam = workspace.CurrentCamera
 				if cam then
@@ -665,86 +540,13 @@ local function runSubLoops()
 					cam.CameraType = prev
 				end
 			end)
-			print("[AFK] 🔢 Anti-AFK ping @ " .. os.date("%H:%M:%S"))
-		end
-	end)
-
-	-- Vòng lặp 4: THEO DÕI KẾT THÚC TRẬN (dựa vào server xoá racer)
-	task.spawn(function()
-		local wasInRace    = false  -- đang theo dõi 1 trận
-		local trackedRace  = nil    -- race đang theo dõi
-		local finishCooldown = false
-
-		while task.wait(0.5) do
-			if isResettingForReset then
-				wasInRace   = false
-				trackedRace = nil
-				continue
-			end
-
-			local currentRace = findMyRace()
-
-			-- Bắt đầu vào trận mới → bắt đầu theo dõi
-			if currentRace and not wasInRace then
-				wasInRace    = true
-				trackedRace  = currentRace
-				finishCooldown = false
-				print("[RaceWatch] 🏁 Bắt đầu theo dõi trận!")
-
-			-- Đang theo dõi → kiểm tra racer còn trong trận không
-			elseif wasInRace and trackedRace and not finishCooldown then
-				-- dùng pcall vì trackedRace có thể đã bị destroy → access .Parent throw error
-				local ok, racersFolder = pcall(function()
-					return trackedRace:FindFirstChild("Racers")
-				end)
-
-				if not ok or not racersFolder then
-					wasInRace   = false
-					trackedRace = nil
-					print("[RaceWatch] ⚠️ trackedRace không còn hợp lệ, reset theo dõi.")
-					continue
-				end
-
-				local racer = racersFolder:FindFirstChild(player.Name)
-
-				local finished = false
-				if not racer then
-					-- Server đã xoá racer khỏi Racers → về đích thật sự
-					finished = true
-					print("[RaceWatch] ✅ Racer bị xoá khỏi Racers → Về đích xác nhận!")
-				end
-
-				if finished and not isResettingForReset then
-					finishCooldown = true
-					wasInRace   = false
-					trackedRace = nil
-
-					_G.myCar              = nil
-					_G.myRace             = nil
-					_G.wasRace            = true
-					_G.firstRaceDelayDone = nil
-
-					completedRaces = completedRaces + 1
-					print("[RaceWatch] 🏆 Trận " .. completedRaces .. "/" .. RACES_PER_RESET .. " hoàn thành!")
-
-					if completedRaces >= RACES_PER_RESET then
-						task.spawn(resetAndRespawn)
-					end
-
-					task.delay(3, function() finishCooldown = false end)
-				end
-
-			-- Không còn trong race nào và không đang theo dõi → reset state
-			elseif not currentRace and wasInRace then
-				wasInRace   = false
-				trackedRace = nil
-			end
+			print("[AFK] ð¢ Anti-AFK ping @ " .. os.date("%H:%M:%S"))
 		end
 	end)
 end
 
--- ══════════════════════════════════════════════════════════════
--- KHỞI CHẠY
+-- âââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
+-- KHá»I CHáº Y
 -- ══════════════════════════════════════════════════════════════
 
 print("[Rejoin] 💾 Đã lưu server: PlaceId=" .. tostring(_G.savedPlaceId) .. " | JobId=" .. tostring(_G.savedServerId))
@@ -757,6 +559,7 @@ local cashObj = getCashObject()
 if not cashObj then warn("[System] ❌ Không tìm thấy leaderstats/Cash sau 60s!") return end
 print("[System] ✅ Đã tìm thấy Cash: " .. tostring(cashObj.Value))
 
+-- Gửi dữ liệu lần đầu
 local firstSend = sendData(cashObj.Value, _G.raceProgress)
 if firstSend then
 	print("[System] ✅ Gửi API lần đầu thành công!")
@@ -766,8 +569,10 @@ end
 
 loaded = true
 
+-- Khởi động monitor rejoin
 startRejoinMonitor()
 
+-- Vòng lặp Auto Farm
 task.spawn(function()
 	while task.wait() do
 		local success, err = pcall(mainAutoFarm)
@@ -775,24 +580,38 @@ task.spawn(function()
 	end
 end)
 
+-- Vòng lặp phụ
 runSubLoops()
 
 -- ══════════════════════════════════════════════════════════════
--- PHẦN 9: GỬI DỮ LIỆU CASH LIÊN TỤC
+-- PHẦN 8: GỬI DỮ LIỆU CASH LIÊN TỤC (HEARTBEAT + ON CHANGE)
 -- ══════════════════════════════════════════════════════════════
 
+-- Gửi ngay khi Cash thay đổi + reset nhân vật nếu nhận > 40.000
 cashObj:GetPropertyChangedSignal("Value"):Connect(function()
 	local val = cashObj.Value
 	if val ~= lastCash then
+		local diff = (lastCash ~= nil) and (val - lastCash) or 0
 		lastCash = val
 		pcall(sendData, val, _G.raceProgress)
+
+		-- Reset nhân vật khi nhận thưởng lớn hơn 40.000
+		if diff > 40000 then
+			print("[Reset] 💰 Nhận thưởng " .. tostring(diff) .. " > 40.000 → Reset nhân vật!")
+			task.delay(0.5, function()
+				pcall(function()
+					player.Character:BreakJoints()
+				end)
+			end)
+		end
 	end
 end)
 
+-- Heartbeat mỗi 1 giây
 task.spawn(function()
 	while task.wait(HEARTBEAT_INTERVAL) do
 		pcall(sendData, cashObj.Value, _G.raceProgress)
 	end
 end)
 
-print("[System] 🚀 Script đã khởi chạy hoàn tất! Reset mỗi " .. RACES_PER_RESET .. " trận | Rejoin VIP & Anti-văng xe đều hoạt động.")
+print("[System] 🚀 Script đã khởi chạy hoàn tất! Rejoin server VIP & Chống văng xe đều hoạt động.")
