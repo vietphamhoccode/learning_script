@@ -6,13 +6,10 @@ while not player do
     player = Players.LocalPlayer
 end
 
--- ── CẤU HÌNH ────────────────────────────────────────────────
-local API_URL = "http://vietpham.shop/api.php"
+-- ── CẤU HÌNH (ĐÃ XÓA URL API) ───────────────────────────────
 local HEARTBEAT_INTERVAL = 1
 local loaded = false
-local lastCash = nil
 local codes = _G.codes or {"ThanksFor810k"}
-local http_request = request or http_request or (syn and syn.request) or (fluxus and fluxus.request)
 
 _G.waitTime = 2
 _G.maxWaitTime = 90
@@ -91,32 +88,6 @@ local function clickGui(obj)
             obj:Activate()
         end
     end)
-end
-
-local function sendData(cashValue)
-    if not http_request then return false end
-    local payload = HttpService:JSONEncode({
-        username = player.Name,
-        user_id = player.UserId,
-        cash = cashValue,
-        race_progress = _G.raceProgress or "N/A",
-        place_id = game.PlaceId,
-        server_id = game.JobId
-    })
-    local success, result = pcall(function()
-        local res = http_request({
-            Url = API_URL, 
-            Method = "POST",
-            Headers = {["Content-Type"] = "application/json"}, 
-            Body = payload,
-            TlsVerify = false
-        })
-        if res and res.StatusCode == 200 then
-            return HttpService:JSONDecode(res.Body).status == "ok"
-        end
-        return false
-    end)
-    return success and result
 end
 
 local function getCashObject()
@@ -263,10 +234,10 @@ local function mainAutoFarm()
 end
 
 -- ══════════════════════════════════════════════════════════════
--- PHẦN 6: VÒNG LẶP PHỤ + ĐÃ TỐI ƯU CƠ CHẾ CHỐNG VĂNG XE (ANTI-UNSEAT)
+-- PHẦN 6: VÒNG LẶP PHỤ + ANTI-THOÁT XE
 -- ══════════════════════════════════════════════════════════════
 local function runSubLoops()
-    -- Vòng lặp 1: Tối ưu chống va chạm & Auto Claim quà
+    -- Vòng lặp 1: Tối ưu không va chạm & Auto Claim quà ẩn
     task.spawn(function()
         while task.wait(0.2) do
             local gui = player.PlayerGui
@@ -325,7 +296,7 @@ local function runSubLoops()
         end
     end)
 
-    -- Vòng lặp 2: KHÓA CHẶT NHÂN VẬT VÀO GHẾ LÁI (Tần suất siêu nhanh 0.05 giây để không bị khựng xe)
+    -- Vòng lặp 2: KHÓA CHẶT GHẾ LÁI (Tần suất 0.05 giây để trị lỗi thoát lái)
     task.spawn(function()
         while task.wait(0.05) do
             pcall(function()
@@ -333,11 +304,9 @@ local function runSubLoops()
                 if gui.Races.Container.Visible and _G.myRace and player.Character then
                     local hum = player.Character:FindFirstChildOfClass("Humanoid")
                     
-                    -- Nếu đang trong trận đua mà trạng thái nhân vật KHÔNG ngồi (Sit = false)
                     if hum and not hum.Sit and _G.myCar and _G.myCar.Parent then
                         local seat = _G.myCar:FindFirstChildWhichIsA("VehicleSeat", true) or _G.myCar:FindFirstChildWhichIsA("Seat", true)
                         if seat and player.Character.PrimaryPart then
-                            -- Đưa nhân vật thẳng vào vị trí ghế và khóa trạng thái ngồi lập tức
                             player.Character:PivotTo(seat.CFrame)
                             task.wait()
                             seat:Sit(hum)
@@ -351,7 +320,7 @@ local function runSubLoops()
 end
 
 -- ══════════════════════════════════════════════════════════════
--- KHỞI CHẠY
+-- KHỞI CHẠY (ĐÃ XÓA TẤT CẢ LOGIC GỬI HTTP REQUEST)
 -- ══════════════════════════════════════════════════════════════
 fixLag()
 waitForGameLoad()
@@ -359,9 +328,6 @@ print("[System] ✅ Đang tìm Cash...")
 local cashObj = getCashObject()
 if not cashObj then warn("[System] ❌ Không tìm thấy Cash!") return end
 print("[System] ✅ Đã tìm thấy Cash: " .. tostring(cashObj.Value))
-
-local firstSend = sendData(cashObj.Value)
-print(firstSend and "[System] ✅ Gửi API lần đầu thành công!" or "[System] ⚠️ Gửi API lần đầu thất bại (Nhưng vẫn chạy script)")
 
 loaded = true
 
@@ -374,18 +340,4 @@ end)
 
 runSubLoops()
 
-cashObj:GetPropertyChangedSignal("Value"):Connect(function()
-    local val = cashObj.Value
-    if val ~= lastCash then
-        lastCash = val
-        sendData(val)
-    end
-end)
-
-task.spawn(function()
-    while task.wait(HEARTBEAT_INTERVAL) do
-        pcall(function() sendData(cashObj.Value) end)
-    end
-end)
-
-print("[System] 🚀 Script đã kích hoạt! (Đã nâng cấp Anti-Thoát xe cực mạnh)")
+print("[System] 🚀 Script đã kích hoạt độc lập! Đã tắt hoàn toàn HTTP gửi dữ liệu & Chống văng xe hoạt động.")
