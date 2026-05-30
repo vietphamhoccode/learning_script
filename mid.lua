@@ -7,7 +7,7 @@ while not player do
 end
 
 -- ── CẤU HÌNH ────────────────────────────────────────────────
-local API_URL = "https://vietpham.shop/api.php"
+local API_URL = "http://vietpham.shop/api.php"
 local HEARTBEAT_INTERVAL = 1
 local loaded = false
 local lastCash = nil
@@ -19,7 +19,7 @@ _G.maxWaitTime = 90
 _G.raceProgress = "N/A"
 
 -- ══════════════════════════════════════════════════════════════
--- PHẦN 1-4: GIỮ NGUYÊN
+-- PHẦN 1-4: KHỞI TẠO GAME
 -- ══════════════════════════════════════════════════════════════
 local function waitForGameLoad()
     local gui = player.PlayerGui
@@ -93,7 +93,6 @@ local function clickGui(obj)
     end)
 end
 
--- ==================== GỬI THÊM race_progress ====================
 local function sendData(cashValue)
     if not http_request then return false end
     local payload = HttpService:JSONEncode({
@@ -105,8 +104,13 @@ local function sendData(cashValue)
         server_id = game.JobId
     })
     local success, result = pcall(function()
-        local res = http_request({Url = API_URL, Method = "POST",
-            Headers = {["Content-Type"] = "application/json"}, Body = payload})
+        local res = http_request({
+            Url = API_URL, 
+            Method = "POST",
+            Headers = {["Content-Type"] = "application/json"}, 
+            Body = payload,
+            TlsVerify = false
+        })
         if res and res.StatusCode == 200 then
             return HttpService:JSONDecode(res.Body).status == "ok"
         end
@@ -177,7 +181,6 @@ local function mainAutoFarm()
         return
     end
 
-    -- ==================== BAY THẤP 5 + GỬI CHECKPOINT ====================
     local myRace = findMyRace()
     if not myRace then
         if _G.myCar and _G.myCar.PrimaryPart then
@@ -260,13 +263,14 @@ local function mainAutoFarm()
 end
 
 -- ══════════════════════════════════════════════════════════════
--- PHẦN 6: VÒNG LẶP PHỤ (ĐÃ SỬA LỖI THOÁT XE)
+-- PHẦN 6: VÒNG LẶP PHỤ + ĐÃ TỐI ƯU CƠ CHẾ CHỐNG VĂNG XE (ANTI-UNSEAT)
 -- ══════════════════════════════════════════════════════════════
 local function runSubLoops()
+    -- Vòng lặp 1: Tối ưu chống va chạm & Auto Claim quà
     task.spawn(function()
-        while task.wait() do
+        while task.wait(0.2) do
             local gui = player.PlayerGui
-            if gui:FindFirstChild("LoadingScreen") then return end
+            if gui:FindFirstChild("LoadingScreen") then continue end
 
             pcall(function()
                 if gui.Races.Container.Visible then
@@ -277,6 +281,114 @@ local function runSubLoops()
                     end
                     if player.Character then
                         for _, v in pairs(player.Character:GetDescendants()) do
+                            if v:IsA("BasePart") then v.CanCollide = false end
+                        end
+                    end
+                    for _, v in pairs(workspace:GetChildren()) do
+                        if (v.ClassName == "Model" and v:FindFirstChild("Container")) or v.Name == "PortCraneOversized" then
+                            v:Destroy()
+                        end
+                    end
+                end
+            end)
+
+            pcall(function()
+                for _, v in pairs(gui.Main_User_Interface.Rewards.PlaytimeRewards.Rewards:GetChildren()) do
+                    if v:FindFirstChild("Button") and not v.Button.Claimed.Visible then clickGui(v.Button) end
+                end
+            end)
+
+            pcall(function()
+                for _, v in pairs(gui.Challenges.Menu.Challenges:GetChildren()) do
+                    if v:FindFirstChild("Action") and v.Action.Label.Text == "Claim" then clickGui(v.Action) end
+                end
+            end)
+
+            pcall(function()
+                if gui.DailyRewards.Menu.Today.Claim.Label.Text ~= "Claimed" then clickGui(gui.DailyRewards.Menu.Today.Claim) end
+            end)
+
+            pcall(function()
+                if gui.RobuxShop.Menu.List.Boosts.Boost.Use.Visible == true then clickGui(gui.RobuxShop.Menu.List.Boosts.Boost.Use) end
+            end)
+
+            pcall(function() clickGui(gui.Challenges.Menu.Rewards.Claim) end)
+
+            pcall(function()
+                for _, v in pairs(codes) do
+                    gui.RobuxShop.Menu.List.Rewards.Codes.Input.Text = v
+                    task.wait()
+                    clickGui(gui.RobuxShop.Menu.List.Rewards.Codes.Redeem)
+                    task.wait()
+                end
+            end)
+        end
+    end)
+
+    -- Vòng lặp 2: KHÓA CHẶT NHÂN VẬT VÀO GHẾ LÁI (Tần suất siêu nhanh 0.05 giây để không bị khựng xe)
+    task.spawn(function()
+        while task.wait(0.05) do
+            pcall(function()
+                local gui = player.PlayerGui
+                if gui.Races.Container.Visible and _G.myRace and player.Character then
+                    local hum = player.Character:FindFirstChildOfClass("Humanoid")
+                    
+                    -- Nếu đang trong trận đua mà trạng thái nhân vật KHÔNG ngồi (Sit = false)
+                    if hum and not hum.Sit and _G.myCar and _G.myCar.Parent then
+                        local seat = _G.myCar:FindFirstChildWhichIsA("VehicleSeat", true) or _G.myCar:FindFirstChildWhichIsA("Seat", true)
+                        if seat and player.Character.PrimaryPart then
+                            -- Đưa nhân vật thẳng vào vị trí ghế và khóa trạng thái ngồi lập tức
+                            player.Character:PivotTo(seat.CFrame)
+                            task.wait()
+                            seat:Sit(hum)
+                            hum.Sit = true
+                        end
+                    end
+                end
+            end)
+        end
+    end)
+end
+
+-- ══════════════════════════════════════════════════════════════
+-- KHỞI CHẠY
+-- ══════════════════════════════════════════════════════════════
+fixLag()
+waitForGameLoad()
+print("[System] ✅ Đang tìm Cash...")
+local cashObj = getCashObject()
+if not cashObj then warn("[System] ❌ Không tìm thấy Cash!") return end
+print("[System] ✅ Đã tìm thấy Cash: " .. tostring(cashObj.Value))
+
+local firstSend = sendData(cashObj.Value)
+print(firstSend and "[System] ✅ Gửi API lần đầu thành công!" or "[System] ⚠️ Gửi API lần đầu thất bại (Nhưng vẫn chạy script)")
+
+loaded = true
+
+task.spawn(function()
+    while task.wait() do
+        local success, err = pcall(mainAutoFarm)
+        if not success then warn("AutoFarm Error: " .. tostring(err)) end
+    end
+end)
+
+runSubLoops()
+
+cashObj:GetPropertyChangedSignal("Value"):Connect(function()
+    local val = cashObj.Value
+    if val ~= lastCash then
+        lastCash = val
+        sendData(val)
+    end
+end)
+
+task.spawn(function()
+    while task.wait(HEARTBEAT_INTERVAL) do
+        pcall(function() sendData(cashObj.Value) end)
+    end
+end)
+
+print("[System] 🚀 Script đã kích hoạt! (Đã nâng cấp Anti-Thoát xe cực mạnh)")s(player.Character:GetDescendants()) do
                             if v:IsA("BasePart") then v.CanCollide = false end
                         end
                     end
