@@ -20,11 +20,9 @@ _G.waitTime      = 2
 _G.maxWaitTime   = 90
 _G.raceProgress  = "N/A"
 
--- ── Tracking spawn xe thất bại ────────────────────────────────
-local spawnAttemptCount = 0
-local spawnAttemptStart = 0
-local SPAWN_MAX_TRY     = 3
-local SPAWN_WINDOW      = 30
+-- ── Tracking teleport thất bại (không vào được trận) ─────────
+local teleportFailCount = 0   -- số lần teleport mà vẫn không vào trận
+local TELEPORT_MAX_FAIL = 10  -- sau 10 lần → reset nhân vật
 
 -- ── RESET MỖI 1 TRẬN ─────────────────────────────────────────
 local completedRaces      = 0        -- đếm số trận đã về đích
@@ -375,28 +373,30 @@ local function mainAutoFarm()
 	local activeRace = _G.myRace or findMyRace()
 
 	if not gui:FindFirstChild("A-Chassis Interface") then
-		-- KHÔNG spawn khi đang trong trận đua (A-Chassis có thể tạm mất trong 1 frame)
-		if activeRace then
-			spawnAttemptCount = 0
-			spawnAttemptStart = 0
-			return
-		end
+		-- KHÔNG spawn khi đang trong trận đua
+		if activeRace then return end
 
-		local now = tick()
-		if spawnAttemptCount == 0 then
-			spawnAttemptStart = now
-		end
-		spawnAttemptCount = spawnAttemptCount + 1
-		print("[Spawn] Lần thử " .. spawnAttemptCount .. "/" .. SPAWN_MAX_TRY)
+		-- Spawn xe bình thường (không retry phức tạp)
+		pcall(function()
+			clickGui(gui.Main_User_Interface.UI_Frame.Buttons.Spawn)
+			task.wait(0.5)
+			for _, v in pairs(gui.Main_User_Interface.Garage.Container.Vehicles:GetChildren()) do
+				if v:IsA("ImageButton") and v.Name ~= "Teleport" then
+					clickGui(v)
+					task.wait(1.5)
+					break
+				end
+			end
+		end)
+		return
+	end
 
-		if spawnAttemptCount >= SPAWN_MAX_TRY and (now - spawnAttemptStart) <= SPAWN_WINDOW then
-			warn("[Spawn] ⚠️ Spawn thất bại " .. SPAWN_MAX_TRY .. " lần trong " .. SPAWN_WINDOW .. "s → Reset nhân vật!")
-			spawnAttemptCount = 0
-			spawnAttemptStart = 0
-			pcall(function() player.Character:BreakJoints() end)
-			task.wait(2.5)
+	if not gui.Races.Container.Visible then
+		if _G.wasRace then
+			_G.wasRace = nil
 			pcall(function()
 				clickGui(gui.Main_User_Interface.UI_Frame.Buttons.Spawn)
+				task.wait(0.5)
 				for _, v in pairs(gui.Main_User_Interface.Garage.Container.Vehicles:GetChildren()) do
 					if v:IsA("ImageButton") and v.Name ~= "Teleport" then
 						clickGui(v)
@@ -405,40 +405,6 @@ local function mainAutoFarm()
 					end
 				end
 			end)
-			return
-		elseif (now - spawnAttemptStart) > SPAWN_WINDOW then
-			spawnAttemptCount = 1
-			spawnAttemptStart = now
-		end
-
-		clickGui(gui.Main_User_Interface.UI_Frame.Buttons.Spawn)
-		for _, v in pairs(gui.Main_User_Interface.Garage.Container.Vehicles:GetChildren()) do
-			if v:IsA("ImageButton") and v.Name ~= "Teleport" then
-				clickGui(v)
-				task.wait(1.5)
-				break
-			end
-		end
-		return
-	else
-		if spawnAttemptCount > 0 then
-			print("[Spawn] ✅ Xe đã spawn thành công. Reset counter.")
-			spawnAttemptCount = 0
-			spawnAttemptStart = 0
-		end
-	end
-
-	if not gui.Races.Container.Visible then
-		if _G.wasRace then
-			_G.wasRace = nil
-			clickGui(gui.Main_User_Interface.UI_Frame.Buttons.Spawn)
-			for _, v in pairs(gui.Main_User_Interface.Garage.Container.Vehicles:GetChildren()) do
-				if v:IsA("ImageButton") and v.Name ~= "Teleport" then
-					clickGui(v)
-					task.wait(1.5)
-					break
-				end
-			end
 		end
 		clickGui(gui.Main_User_Interface.Teleport.Container.Races.Race8.Container.Teleport)
 		task.wait(2)
@@ -447,6 +413,48 @@ local function mainAutoFarm()
 
 	local myRace = findMyRace()
 	if not myRace then
+		-- Đã ở màn Race8 nhưng chưa vào trận → đếm thất bại
+		teleportFailCount = teleportFailCount + 1
+		print("[Teleport] ⏳ Chưa vào trận lần " .. teleportFailCount .. "/" .. TELEPORT_MAX_FAIL)
+
+		if teleportFailCount >= TELEPORT_MAX_FAIL then
+			teleportFailCount = 0
+			warn("[Teleport] ⚠️ Teleport " .. TELEPORT_MAX_FAIL .. " lần vẫn không vào trận → Reset nhân vật!")
+			pcall(function()
+				_G.myCar  = nil
+				_G.myRace = nil
+				_G.wasRace = nil
+				_G.firstRaceDelayDone = nil
+				if player.Character then
+					player.Character:BreakJoints()
+				end
+			end)
+			task.wait(4)
+			-- Spawn xe lại sau reset
+			pcall(function()
+				clickGui(gui.Main_User_Interface.UI_Frame.Buttons.Spawn)
+				task.wait(0.5)
+				for _, v in pairs(gui.Main_User_Interface.Garage.Container.Vehicles:GetChildren()) do
+					if v:IsA("ImageButton") and v.Name ~= "Teleport" then
+						clickGui(v)
+						task.wait(1.5)
+						break
+					end
+				end
+			end)
+			task.wait(2)
+			-- Teleport lại vào Race8
+			pcall(function()
+				clickGui(gui.Main_User_Interface.Teleport.Container.Races.Race8.Container.Teleport)
+			end)
+			task.wait(2)
+			return
+		end
+
+		-- Chưa đủ 10 lần → teleport lại bình thường
+		clickGui(gui.Main_User_Interface.Teleport.Container.Races.Race8.Container.Teleport)
+		task.wait(2)
+
 		if _G.myCar and _G.myCar.PrimaryPart then
 			pcall(function()
 				_G.myCar.PrimaryPart.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
@@ -455,6 +463,12 @@ local function mainAutoFarm()
 		_G.myCar  = nil
 		_G.myRace = nil
 		return
+	end
+
+	-- Vào được trận → reset counter
+	if teleportFailCount > 0 then
+		print("[Teleport] ✅ Đã vào trận! Reset fail counter.")
+		teleportFailCount = 0
 	end
 
 	local racer = myRace.Racers:FindFirstChild(player.Name)
