@@ -1,15 +1,17 @@
--- ================== FULL SCRIPT - ĐÃ XÓA TOÀN BỘ RESET NHÂN VẬT ==================
--- Phiên bản v2.5 - KHÔNG CÒN RESET CHARTER / BREAKJOINTS
--- Hoàn thành đua → teleport về Race8 ngay (vẫn ngồi trên xe)
+-- ================== FULL SCRIPT v3 - BLACK SCREEN + TỐI ƯU TỐI ĐA + CHỈ BÁO QUAN TRỌNG ==================
+-- • Black Screen giảm RAM & đồ họa mạnh
+-- • Tối ưu settings cực thấp
+-- • Chỉ hiện: Thời gian hoàn thành đua + Tiền vừa nhận
+-- • Không reset nhân vật | Không jump | Anti-AFK 20s
 
 local Players = game:GetService("Players")
 local HttpService = game:GetService("HttpService")
 local VirtualUser = game:GetService("VirtualUser")
+local Lighting = game:GetService("Lighting")
 local player = Players.LocalPlayer
 while not player do task.wait(0.5) player = Players.LocalPlayer end
 
 if _G.AutoFarmV2_Running then
-    print("[System] ⚠️ Phát hiện script cũ đang chạy → Đang dừng...")
     _G.AutoFarmV2_Running = false
     task.wait(1.8)
 end
@@ -31,6 +33,35 @@ local lastClaimTime = 0
 local lastCloseTime = 0
 local lastAFKTime = 0
 local lastNoclipCar = nil
+local raceStartTime = 0
+
+-- ================== BLACK SCREEN + TỐI ƯU ĐỒ HỌA CỰC MẠNH ==================
+local function enableBlackScreenAndLowGraphics()
+    pcall(function()
+        -- Black Screen
+        local sg = Instance.new("ScreenGui")
+        sg.Name = "BlackScreenOptimizer"
+        sg.IgnoreGuiInset = true
+        sg.Parent = player:WaitForChild("PlayerGui")
+        
+        local frame = Instance.new("Frame")
+        frame.Size = UDim2.new(1, 0, 1, 0)
+        frame.BackgroundColor3 = Color3.new(0, 0, 0)
+        frame.BorderSizePixel = 0
+        frame.Parent = sg
+        
+        -- Tối ưu Lighting cực thấp
+        Lighting.GlobalShadows = false
+        Lighting.FogEnd = 9e9
+        Lighting.Brightness = 0
+        Lighting.OutdoorAmbient = Color3.new(0,0,0)
+        Lighting.Ambient = Color3.new(0,0,0)
+        
+        -- Giảm chất lượng render
+        settings().Rendering.QualityLevel = Enum.QualityLevel.Level01
+        settings().Rendering.MeshPartDetailLevel = Enum.MeshPartDetailLevel.Level01
+    end)
+end
 
 local function clickGui(obj)
     if not obj then return end
@@ -68,15 +99,6 @@ local function getCashObject()
         task.wait(1)
     end
     return nil
-end
-
-local function fixLag()
-    pcall(function()
-        local lighting = game:GetService("Lighting")
-        lighting.GlobalShadows = false
-        lighting.FogEnd = 9e9
-        settings().Rendering.QualityLevel = Enum.QualityLevel.Level01
-    end)
 end
 
 local function claimRewards()
@@ -173,13 +195,22 @@ local function mainAutoFarm()
         if seat then player.Character:PivotTo(seat.CFrame * CFrame.new(0, 2, 0)) seat:Sit(hum) end
     end
 
+    if currentCP == 0 and raceStartTime == 0 then
+        raceStartTime = now
+    end
+
     if currentCP >= totalCP then
         if now - lastFinishTime > 4 then
             lastFinishTime = now
+            local raceTime = math.floor(now - raceStartTime)
+            raceStartTime = 0
+            
             task.wait(1.2)
             closeRewardModal()
             task.wait(0.8)
             clickGui(gui.Main_User_Interface.Teleport.Container.Races.Race8.Container.Teleport)
+            
+            print("[Race] ✅ Hoàn thành trong " .. raceTime .. " giây!")
         end
         return
     end
@@ -205,9 +236,10 @@ local function mainAutoFarm()
     end
 end
 
-print("[System] 🚀 SCRIPT ĐÃ XÓA TOÀN BỘ RESET NHÂN VẬT - v2.5")
+-- ================== KHỞI CHẠY ==================
+print("[System] 🚀 Đang khởi chạy v3 - Black Screen + Tối ưu cực mạnh")
 
-fixLag()
+enableBlackScreenAndLowGraphics()
 task.wait(2)
 
 local cashObj = getCashObject()
@@ -216,6 +248,13 @@ if not cashObj then
     _G.AutoFarmV2_Running = false
     return
 end
+
+cashObj:GetPropertyChangedSignal("Value"):Connect(function()
+    if _G.AutoFarmV2_Running then
+        pcall(sendData, cashObj.Value, _G.raceProgress)
+        print("[Cash] + " .. cashObj.Value .. " Cash")
+    end
+end)
 
 task.spawn(function()
     while task.wait(0.03) do
@@ -230,15 +269,14 @@ task.spawn(function()
         local now = tick()
         if now - lastClaimTime > 8 then lastClaimTime = now claimRewards() end
         if now - lastCloseTime > 2.5 then lastCloseTime = now closeRewardModal() end
-        if now - lastAFKTime > 35 then
+        if now - lastAFKTime > 20 then
             lastAFKTime = now
-            pcall(function() VirtualUser:CaptureController() VirtualUser:ClickButton2(Vector2.new(0,0)) end)
+            pcall(function()
+                VirtualUser:CaptureController()
+                VirtualUser:ClickButton2(Vector2.new(0, 0))
+            end)
         end
     end
-end)
-
-cashObj:GetPropertyChangedSignal("Value"):Connect(function()
-    if _G.AutoFarmV2_Running then pcall(sendData, cashObj.Value, _G.raceProgress) end
 end)
 
 task.spawn(function()
@@ -248,4 +286,4 @@ task.spawn(function()
     end
 end)
 
-print("[System] ✅ Hoàn tất! KHÔNG CÒN RESET NHÂN VẬT NỮA.")
+print("[System] ✅ Đã chạy thành công! Black Screen + Chỉ báo thời gian & tiền.")
