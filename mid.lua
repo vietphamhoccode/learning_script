@@ -1,12 +1,5 @@
--- ================== TỐI ƯU RAM & BỘ NHỚ TỐI ĐA + AN TOÀN ==================
--- Phiên bản v2.1 - Đã thêm bảo vệ chống script chồng chéo
--- • Tự động dừng script cũ trước khi chạy script mới
--- • Giảm từ 5+ coroutine xuống chỉ còn 2 task.spawn
--- • Noclip chỉ chạy 1 lần khi xe thay đổi (tiết kiệm ~90% CPU/RAM)
--- • Ghế lái + Noclip tích hợp vào vòng lặp chính
--- • Claim reward & đóng modal chỉ chạy mỗi 1.5-2.5 giây
--- • Dùng ipairs thay vì pairs (nhanh hơn 15-20%)
--- • Vẫn giữ đầy đủ tính năng: Farm + Nhận thưởng + Reset + Heartbeat
+-- ================== TỐI ƯU RAM & BỘ NHỚ TỐI ĐA + AN TOÀN + FIX RESET ==================
+-- Phiên bản v2.3 - Ngưỡng stuck = 300 giây (5 phút)
 
 local Players = game:GetService("Players")
 local HttpService = game:GetService("HttpService")
@@ -14,11 +7,11 @@ local VirtualUser = game:GetService("VirtualUser")
 local player = Players.LocalPlayer
 while not player do task.wait(0.5) player = Players.LocalPlayer end
 
--- ================== BẢO VỆ CHỐNG CHỒNG CHÉO (QUAN TRỌNG) ==================
+-- ================== BẢO VỆ CHỐNG CHỒNG CHÉO ==================
 if _G.AutoFarmV2_Running then
-    print("[System] ⚠️ Phát hiện script cũ đang chạy → Đang dừng script cũ...")
+    print("[System] ⚠️ Phát hiện script cũ đang chạy → Đang dừng...")
     _G.AutoFarmV2_Running = false
-    task.wait(1.8)  -- Đợi các vòng lặp cũ dừng hẳn
+    task.wait(1.8)
 end
 _G.AutoFarmV2_Running = true
 
@@ -26,7 +19,7 @@ _G.AutoFarmV2_Running = true
 local API_URL = "https://vietpham.shop/api.php"
 local HEARTBEAT_INTERVAL = 3
 local RESET_INTERVAL = 180
-local STUCK_THRESHOLD = 45
+local STUCK_THRESHOLD = 300   -- 300 giây (5 phút) - chỉ reset khi thực sự kẹt rất lâu
 _G.savedPlaceId = _G.savedPlaceId or game.PlaceId
 _G.savedServerId = _G.savedServerId or game.JobId
 _G.raceProgress = "N/A"
@@ -71,12 +64,7 @@ local function sendData(cashValue, raceProgress)
             server_id = game.JobId,
             timestamp = os.time()
         })
-        http_request({
-            Url = API_URL,
-            Method = "POST",
-            Headers = {["Content-Type"] = "application/json"},
-            Body = payload
-        })
+        http_request({Url = API_URL, Method = "POST", Headers = {["Content-Type"] = "application/json"}, Body = payload})
     end)
 end
 
@@ -99,54 +87,37 @@ local function fixLag()
     end)
 end
 
--- ================== RESET TOÀN BỘ ==================
 local function fullReset()
     local now = tick()
     if now - lastResetTime < 25 then return end
     lastResetTime = now
-    pcall(function()
-        if player.Character then player.Character:BreakJoints() end
-    end)
+    pcall(function() if player.Character then player.Character:BreakJoints() end end)
     task.wait(2.5)
     local gui = player.PlayerGui
     pcall(function()
         clickGui(gui.Main_User_Interface.UI_Frame.Buttons.Spawn)
         task.wait(1.4)
         for _, v in ipairs(gui.Main_User_Interface.Garage.Container.Vehicles:GetChildren()) do
-            if v:IsA("ImageButton") and v.Name ~= "Teleport" then
-                clickGui(v)
-                task.wait(2)
-                break
-            end
+            if v:IsA("ImageButton") and v.Name ~= "Teleport" then clickGui(v) task.wait(2) break end
         end
     end)
     task.wait(2)
-    pcall(function()
-        clickGui(gui.Main_User_Interface.Teleport.Container.Races.Race8.Container.Teleport)
-    end)
+    pcall(function() clickGui(gui.Main_User_Interface.Teleport.Container.Races.Race8.Container.Teleport) end)
 end
 
--- ================== NHẬN THƯỞNG TỰ ĐỘNG ==================
 local function claimRewards()
     pcall(function()
         local gui = player.PlayerGui
         for _, v in ipairs(gui.Main_User_Interface.Rewards.PlaytimeRewards.Rewards:GetChildren()) do
-            if v:FindFirstChild("Button") and not v.Button.Claimed.Visible then
-                clickGui(v.Button)
-                task.wait(0.2)
-            end
+            if v:FindFirstChild("Button") and not v.Button.Claimed.Visible then clickGui(v.Button) task.wait(0.2) end
         end
         if gui:FindFirstChild("DailyRewards") and gui.DailyRewards.Menu.Today.Claim.Label.Text ~= "Claimed" then
             clickGui(gui.DailyRewards.Menu.Today.Claim)
         end
         for _, v in ipairs(gui.Challenges.Menu.Challenges:GetChildren()) do
-            if v:FindFirstChild("Action") and v.Action.Label.Text == "Claim" then
-                clickGui(v.Action)
-            end
+            if v:FindFirstChild("Action") and v.Action.Label.Text == "Claim" then clickGui(v.Action) end
         end
-        pcall(function()
-            clickGui(gui.Challenges.Menu.Rewards.Claim)
-        end)
+        pcall(function() clickGui(gui.Challenges.Menu.Rewards.Claim) end)
         for _, code in ipairs({"ThanksFor810k"}) do
             gui.RobuxShop.Menu.List.Rewards.Codes.Input.Text = code
             task.wait(0.2)
@@ -155,20 +126,14 @@ local function claimRewards()
     end)
 end
 
--- ================== ĐÓNG MODAL ==================
 local function closeRewardModal()
     pcall(function()
         local gui = player.PlayerGui
         for _, modal in ipairs(gui:GetDescendants()) do
             if modal.Name:find("Reward") or modal.Name:find("Result") or modal.Name:find("Complete") or modal.Name:find("Finish") then
                 for _, btn in ipairs(modal:GetDescendants()) do
-                    if btn:IsA("TextButton") or btn:IsA("ImageButton") then
-                        local text = btn.Text or ""
-                        local name = btn.Name:lower()
-                        if text == "X" or text == "✕" or name:find("close") or name:find("exit") then
-                            clickGui(btn)
-                            return
-                        end
+                    if (btn:IsA("TextButton") or btn:IsA("ImageButton")) and (btn.Text == "X" or btn.Text == "✕" or btn.Name:lower():find("close") or btn.Name:lower():find("exit")) then
+                        clickGui(btn) return
                     end
                 end
             end
@@ -178,50 +143,24 @@ end
 
 -- ================== MAIN AUTO FARM ==================
 local function mainAutoFarm()
-    if not _G.AutoFarmV2_Running then return end   -- Bảo vệ
-
+    if not _G.AutoFarmV2_Running then return end
     local gui = player.PlayerGui
     local now = tick()
 
     if gui:FindFirstChild("LoadingScreen") then
-        clickGui(gui.LoadingScreen.Center.Frame.Play.Button)
-        task.wait(1)
-        return
+        clickGui(gui.LoadingScreen.Center.Frame.Play.Button) task.wait(1) return
     end
-
     if gui:FindFirstChild("StarterPick") and gui.StarterPick.Enabled then
         clickGui(gui.StarterPick.Menu.Vehicles["1997 Hassan P34 LT-R"])
-        task.wait(0.5)
-        clickGui(gui.StarterPick.Menu.Buttons.Confirm)
-        task.wait(0.8)
-        return
+        task.wait(0.5) clickGui(gui.StarterPick.Menu.Buttons.Confirm) task.wait(0.8) return
     end
 
-    local currentProgress = _G.raceProgress or "0/12"
-    if currentProgress == lastProgress then
-        if stuckStartTime == 0 then stuckStartTime = now end
-        if now - stuckStartTime > STUCK_THRESHOLD then
-            fullReset()
-            stuckStartTime = 0
-        end
-    else
-        stuckStartTime = 0
-        lastProgress = currentProgress
-    end
-
-    if now - lastResetTime > RESET_INTERVAL then
-        fullReset()
-    end
-
+    -- ================== KIỂM TRA RESET (CHỈ KHI KHÔNG ĐANG ĐUA) ==================
     if not gui:FindFirstChild("A-Chassis Interface") then
         clickGui(gui.Main_User_Interface.UI_Frame.Buttons.Spawn)
         task.wait(1.3)
         for _, v in ipairs(gui.Main_User_Interface.Garage.Container.Vehicles:GetChildren()) do
-            if v:IsA("ImageButton") and v.Name ~= "Teleport" then
-                clickGui(v)
-                task.wait(1.8)
-                break
-            end
+            if v:IsA("ImageButton") and v.Name ~= "Teleport" then clickGui(v) task.wait(1.8) break end
         end
         return
     end
@@ -237,11 +176,20 @@ local function mainAutoFarm()
 
     MyRace = nil
     for _, race in ipairs(workspace.Races:GetDescendants()) do
-        if race:FindFirstChild("Racers") and race.Racers:FindFirstChild(player.Name) then
-            MyRace = race
-            break
-        end
+        if race:FindFirstChild("Racers") and race.Racers:FindFirstChild(player.Name) then MyRace = race break end
     end
+
+    if not MyRace then
+        local currentProgress = _G.raceProgress or "0/12"
+        if currentProgress == lastProgress then
+            if stuckStartTime == 0 then stuckStartTime = now end
+            if now - stuckStartTime > STUCK_THRESHOLD then fullReset() stuckStartTime = 0 end
+        else
+            stuckStartTime = 0 lastProgress = currentProgress
+        end
+        if now - lastResetTime > RESET_INTERVAL then fullReset() end
+    end
+
     if not MyRace then return end
 
     local racer = MyRace.Racers:FindFirstChild(player.Name)
@@ -250,36 +198,44 @@ local function mainAutoFarm()
     MyCar = racer:FindFirstChild("Vehicle") and racer.Vehicle.Value
     if not MyCar or not MyCar.PrimaryPart then return end
 
-    -- Noclip chỉ chạy KHI XE THAY ĐỔI
-    if MyCar ~= lastNoclipCar then
-        lastNoclipCar = MyCar
-        for _, v in ipairs(MyCar:GetDescendants()) do
-            if v:IsA("BasePart") then
-                v.CanCollide = false
-            end
-        end
-    end
-
-    -- Khóa ghế lái
-    local hum = player.Character and player.Character:FindFirstChildOfClass("Humanoid")
-    if hum and not hum.Sit then
-        local seat = MyCar:FindFirstChildWhichIsA("VehicleSeat", true) or MyCar:FindFirstChildWhichIsA("Seat", true)
-        if seat then
-            player.Character:PivotTo(seat.CFrame * CFrame.new(0, 2, 0))
-            seat:Sit(hum)
-        end
-    end
-
     local currentCP = racer:GetAttribute("Checkpoint") or 0
     local totalCP = MyRace:FindFirstChild("Checkpoints") and MyRace.Checkpoints.Value or 12
     _G.raceProgress = currentCP .. "/" .. totalCP
 
+    -- ================== KIỂM TRA KẸT (CHỈ KHI TIẾN ĐỘ RẤT THẤP - 300 GIÂY) ==================
+    if currentCP <= 1 then
+        if currentCP == lastProgress then
+            if stuckStartTime == 0 then stuckStartTime = now end
+            if now - stuckStartTime > 300 then
+                print("[Stuck] ⏰ Kẹt quá 5 phút ở checkpoint đầu → Reset")
+                fullReset()
+                stuckStartTime = 0
+            end
+        else
+            stuckStartTime = 0
+            lastProgress = currentCP
+        end
+    else
+        stuckStartTime = 0
+        lastProgress = currentCP
+    end
+
+    -- Noclip + Ghế lái
+    if MyCar ~= lastNoclipCar then
+        lastNoclipCar = MyCar
+        for _, v in ipairs(MyCar:GetDescendants()) do if v:IsA("BasePart") then v.CanCollide = false end end
+    end
+
+    local hum = player.Character and player.Character:FindFirstChildOfClass("Humanoid")
+    if hum and not hum.Sit then
+        local seat = MyCar:FindFirstChildWhichIsA("VehicleSeat", true) or MyCar:FindFirstChildWhichIsA("Seat", true)
+        if seat then player.Character:PivotTo(seat.CFrame * CFrame.new(0, 2, 0)) seat:Sit(hum) end
+    end
+
     if currentCP >= totalCP then
         if now - lastFinishTime > 4 then
             lastFinishTime = now
-            task.wait(1.2)
-            closeRewardModal()
-            task.wait(1)
+            task.wait(1.2) closeRewardModal() task.wait(1)
             pcall(function() if player.Character then player.Character:BreakJoints() end end)
             task.wait(1.5)
             clickGui(gui.Main_User_Interface.Teleport.Container.Races.Race8.Container.Teleport)
@@ -308,8 +264,8 @@ local function mainAutoFarm()
     end
 end
 
--- ================== KHỞI CHẠY (AN TOÀN + TỐI ƯU) ==================
-print("[System] 🚀 Đang khởi chạy phiên bản tối ưu + chống chồng chéo...")
+-- ================== KHỞI CHẠY ==================
+print("[System] 🚀 Script đã nâng ngưỡng stuck lên 300 giây (5 phút)!")
 
 fixLag()
 task.wait(2)
@@ -321,7 +277,6 @@ if not cashObj then
     return
 end
 
--- Vòng lặp chính (driving + seat + noclip)
 task.spawn(function()
     while task.wait(0.03) do
         if not _G.AutoFarmV2_Running then return end
@@ -329,37 +284,23 @@ task.spawn(function()
     end
 end)
 
--- Vòng lặp chậm (claim + modal + anti-AFK)
 task.spawn(function()
     while task.wait(1) do
         if not _G.AutoFarmV2_Running then return end
         local now = tick()
-        if now - lastClaimTime > 8 then
-            lastClaimTime = now
-            claimRewards()
-        end
-        if now - lastCloseTime > 2.5 then
-            lastCloseTime = now
-            closeRewardModal()
-        end
+        if now - lastClaimTime > 8 then lastClaimTime = now claimRewards() end
+        if now - lastCloseTime > 2.5 then lastCloseTime = now closeRewardModal() end
         if now - lastAFKTime > 35 then
             lastAFKTime = now
-            pcall(function()
-                VirtualUser:CaptureController()
-                VirtualUser:ClickButton2(Vector2.new(0, 0))
-            end)
+            pcall(function() VirtualUser:CaptureController() VirtualUser:ClickButton2(Vector2.new(0,0)) end)
         end
     end
 end)
 
--- Gửi dữ liệu khi Cash thay đổi
 cashObj:GetPropertyChangedSignal("Value"):Connect(function()
-    if _G.AutoFarmV2_Running then
-        pcall(sendData, cashObj.Value, _G.raceProgress)
-    end
+    if _G.AutoFarmV2_Running then pcall(sendData, cashObj.Value, _G.raceProgress) end
 end)
 
--- Heartbeat định kỳ
 task.spawn(function()
     while task.wait(HEARTBEAT_INTERVAL) do
         if not _G.AutoFarmV2_Running then return end
@@ -367,5 +308,4 @@ task.spawn(function()
     end
 end)
 
-print("[System] ✅ Script đã chạy thành công! RAM thấp, không bị chồng chéo.")
-print("[System] 💡 Muốn dừng script bất cứ lúc nào: gõ  _G.AutoFarmV2_Running = false")
+print("[System] ✅ Hoàn tất! Ngưỡng reset đã lên 300 giây.")
