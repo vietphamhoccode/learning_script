@@ -22,6 +22,8 @@ local MyRace = nil
 local lastFinishTime = 0
 local lastTeleportTime = 0
 local lastUpdate = 0
+local lastSpawnAttempt = 0
+local stuckCounter = 0
 
 -- ================== HÀM ==================
 local function clickGui(obj)
@@ -75,43 +77,68 @@ local function fixLag()
 	end)
 end
 
--- ================== ĐÓNG MODAL NHẬN THƯỞNG (NÚT X) ==================
+-- ================== FORCE SPAWN XE KHI BỊ KẸT ==================
+local function forceSpawnCar()
+	local now = tick()
+	if now - lastSpawnAttempt < 8 then return end
+	lastSpawnAttempt = now
+
+	print("[Recovery] 🔄 Phát hiện kẹt xe → Force Spawn lại")
+
+	local gui = player.PlayerGui
+
+	-- Mở Garage & Spawn
+	pcall(function()
+		clickGui(gui.Main_User_Interface.UI_Frame.Buttons.Spawn)
+		task.wait(1.2)
+
+		for _, v in pairs(gui.Main_User_Interface.Garage.Container.Vehicles:GetChildren()) do
+			if v:IsA("ImageButton") and v.Name ~= "Teleport" then
+				clickGui(v)
+				task.wait(1.8)
+				print("[Recovery] ✅ Đã spawn xe thành công")
+				stuckCounter = 0
+				return true
+			end
+		end
+	end)
+
+	-- Nếu vẫn không có xe thì reset nhân vật
+	task.wait(2)
+	pcall(function()
+		if player.Character then
+			player.Character:BreakJoints()
+		end
+	end)
+end
+
+-- ================== ĐÓNG MODAL ==================
 local function closeRewardModal()
 	pcall(function()
 		local gui = player.PlayerGui
-		
-		-- Tìm các modal phổ biến sau khi hoàn thành race
 		for _, modal in pairs(gui:GetDescendants()) do
-			if modal:IsA("Frame") or modal:IsA("ImageLabel") or modal:IsA("ScreenGui") then
-				if modal.Name:find("Reward") or modal.Name:find("Result") or modal.Name:find("Complete") or 
-				   modal.Name:find("Finish") or modal.Name:find("Modal") then
-					
-					-- Tìm nút X / Close
-					for _, btn in pairs(modal:GetDescendants()) do
-						if btn:IsA("TextButton") or btn:IsA("ImageButton") then
-							local text = btn.Text or ""
-							local btnName = btn.Name:lower()
-							
-							if text == "X" or text == "✕" or text == "Close" or 
-							   btnName:find("close") or btnName:find("xbtn") or btnName:find("exit") then
-								clickGui(btn)
-								print("[Modal] ✅ Đã đóng modal nhận thưởng (nút X)")
-								return true
-							end
+			if modal.Name:find("Reward") or modal.Name:find("Result") or modal.Name:find("Complete") then
+				for _, btn in pairs(modal:GetDescendants()) do
+					if btn:IsA("TextButton") or btn:IsA("ImageButton") then
+						local text = btn.Text or ""
+						local name = btn.Name:lower()
+						if text == "X" or text == "✕" or name:find("close") or name:find("exit") then
+							clickGui(btn)
+							return
 						end
 					end
 				end
 			end
 		end
 	end)
-	return false
 end
 
--- ================== MAIN DRIVE - Độ cao = 5 ==================
+-- ================== MAIN AUTO FARM ==================
 local function mainAutoFarm()
 	local gui = player.PlayerGui
 	local now = tick()
 
+	-- Loading & Starter
 	if gui:FindFirstChild("LoadingScreen") then
 		clickGui(gui.LoadingScreen.Center.Frame.Play.Button) task.wait(1) return
 	end
@@ -122,22 +149,35 @@ local function mainAutoFarm()
 		task.wait(0.8) return
 	end
 
+	-- Kiểm tra xem có bị kẹt không (không có xe + không vào race)
+	if not gui:FindFirstChild("A-Chassis Interface") or (not MyCar and not gui.Races.Container.Visible) then
+		stuckCounter = stuckCounter + 1
+		if stuckCounter >= 6 then  -- Kẹt ~15-18 giây
+			forceSpawnCar()
+			stuckCounter = 0
+		end
+	else
+		stuckCounter = 0
+	end
+
+	-- Spawn xe nếu chưa có
 	if not gui:FindFirstChild("A-Chassis Interface") then
 		clickGui(gui.Main_User_Interface.UI_Frame.Buttons.Spawn)
-		task.wait(1)
+		task.wait(1.2)
 		for _, v in pairs(gui.Main_User_Interface.Garage.Container.Vehicles:GetChildren()) do
 			if v:IsA("ImageButton") and v.Name ~= "Teleport" then
-				clickGui(v) task.wait(1.5) break
+				clickGui(v) task.wait(1.6) break
 			end
 		end
 		return
 	end
 
+	-- Teleport vào Race8
 	if not gui.Races.Container.Visible and (not MyRace or not MyCar) then
 		if now - lastTeleportTime > 5 then
 			lastTeleportTime = now
 			clickGui(gui.Main_User_Interface.Teleport.Container.Races.Race8.Container.Teleport)
-			task.wait(2)
+			task.wait(2.2)
 		end
 		return
 	end
@@ -150,7 +190,10 @@ local function mainAutoFarm()
 		end
 	end
 
-	if not MyRace then MyCar = nil return end
+	if not MyRace then 
+		MyCar = nil 
+		return 
+	end
 
 	local racer = MyRace.Racers:FindFirstChild(player.Name)
 	if not racer then return end
@@ -162,18 +205,16 @@ local function mainAutoFarm()
 	local totalCP = MyRace:FindFirstChild("Checkpoints") and MyRace.Checkpoints.Value or 12
 	_G.raceProgress = currentCP .. "/" .. totalCP
 
-	-- Hoàn thành race + đóng modal
+	-- Hoàn thành race
 	if currentCP >= totalCP then
 		if now - lastFinishTime > 4 then
 			lastFinishTime = now
-			print("[Race] ✅ Hoàn thành race! Đang đóng modal...")
-
-			-- Đóng modal nhận thưởng
-			task.wait(1.2)
+			print("[Race] ✅ Hoàn thành! Đóng modal...")
+			task.wait(1)
 			closeRewardModal()
-			
+			task.wait(1)
 			pcall(function() if player.Character then player.Character:BreakJoints() end end)
-			task.wait(1.5)
+			task.wait(1.2)
 			clickGui(gui.Main_User_Interface.Teleport.Container.Races.Race8.Container.Teleport)
 		end
 		return
@@ -190,20 +231,17 @@ local function mainAutoFarm()
 
 	if checkpointPart then
 		local lookahead = hrp.CFrame.LookVector * 22
-		local targetPos = checkpointPart.Position + Vector3.new(0, 5, 0) + lookahead   -- Độ cao = 5
+		local targetPos = checkpointPart.Position + Vector3.new(0, 5, 0) + lookahead
 		
 		local dist = (targetPos - hrp.Position).Magnitude
 		local direction = (targetPos - hrp.Position).Unit
 
 		local speed = 1480
 		if dist < 45 then speed = 1820 end
-		if cpName == "Finish" or nextCPNum >= totalCP - 2 then 
-			speed = 2280 
-		end
+		if cpName == "Finish" or nextCPNum >= totalCP - 2 then speed = 2280 end
 
 		hrp.AssemblyLinearVelocity = direction * speed + Vector3.new(0, 35, 0)
-		local targetCF = CFrame.lookAt(hrp.Position, targetPos)
-		hrp:PivotTo(hrp.CFrame:Lerp(targetCF, 0.95))
+		hrp:PivotTo(hrp.CFrame:Lerp(CFrame.lookAt(hrp.Position, targetPos), 0.95))
 	end
 end
 
@@ -215,7 +253,6 @@ local function runSubLoops()
 			pcall(function()
 				local hum = player.Character and player.Character:FindFirstChildOfClass("Humanoid")
 				if not hum or not MyCar then return end
-
 				local seat = MyCar:FindFirstChildWhichIsA("VehicleSeat", true) or MyCar:FindFirstChildWhichIsA("Seat", true)
 				if seat and not hum.Sit then
 					player.Character:PivotTo(seat.CFrame * CFrame.new(0, 2, 0))
@@ -237,7 +274,7 @@ local function runSubLoops()
 		end
 	end)
 
-	-- Đóng modal liên tục (backup)
+	-- Đóng modal
 	task.spawn(function()
 		while task.wait(1.5) do
 			closeRewardModal()
@@ -256,7 +293,7 @@ local function runSubLoops()
 end
 
 -- ================== KHỞI CHẠY ==================
-print("[System] 🚀 Đã thêm tự động đóng Modal nhận thưởng (nút X)")
+print("[System] 🚀 Đã thêm Anti-Stuck + Force Spawn Xe")
 
 fixLag()
 task.wait(2)
@@ -282,4 +319,4 @@ task.spawn(function()
 	end
 end)
 
-print("[System] ✅ Script chạy với độ cao xe = 5 + Đóng modal tự động")
+print("[System] ✅ Script đã có cơ chế khôi phục khi không spawn được xe")
