@@ -8,7 +8,8 @@ while not player do task.wait(0.5) player = Players.LocalPlayer end
 -- ================== CẤU HÌNH ==================
 local API_URL            = "https://vietpham.shop/api.php"
 local HEARTBEAT_INTERVAL = 3
-local codes              = _G.codes or {"ThanksFor810k"}
+local RESET_INTERVAL     = 180     -- Reset toàn bộ mỗi 3 phút (180 giây)
+local STUCK_THRESHOLD    = 45      -- Nếu kẹt quá 45 giây thì reset
 
 _G.savedPlaceId  = _G.savedPlaceId  or game.PlaceId
 _G.savedServerId = _G.savedServerId or game.JobId
@@ -22,10 +23,9 @@ local MyRace = nil
 local lastFinishTime = 0
 local lastTeleportTime = 0
 local lastUpdate = 0
-local lastSpawnAttempt = 0
-local stuckCounter = 0
-local justSpawned = false
-local lastValidCarTime = 0
+local lastResetTime = 0
+local lastProgress = "0/12"
+local stuckStartTime = 0
 
 -- ================== HÀM ==================
 local function clickGui(obj)
@@ -79,45 +79,46 @@ local function fixLag()
 	end)
 end
 
--- ================== KIỂM TRA XE CHÍNH XÁC HƠN ==================
-local function hasValidCar()
-	if MyCar and MyCar.Parent and MyCar.PrimaryPart then
-		local seat = MyCar:FindFirstChildWhichIsA("VehicleSeat", true) or MyCar:FindFirstChildWhichIsA("Seat", true)
-		local hum = player.Character and player.Character:FindFirstChildOfClass("Humanoid")
-		
-		if seat and hum and hum.Sit then
-			lastValidCarTime = tick()
-			return true
-		end
-	end
-	return false
-end
-
--- ================== FORCE SPAWN (ĐÃ GIẢM TẦN SUẤT) ==================
-local function forceSpawnCar()
+-- ================== RESET TOÀN BỘ (ĐƠN GIẢN) ==================
+local function fullReset()
 	local now = tick()
-	if now - lastSpawnAttempt < 15 then return end  -- Tăng debounce lên 15 giây
-	lastSpawnAttempt = now
-	justSpawned = true
+	if now - lastResetTime < 25 then return end
+	lastResetTime = now
 
-	print("[Recovery] 🔄 Force Spawn xe...")
+	print("[Reset] 🔄 Thực hiện Full Reset...")
 
+	-- Reset nhân vật
+	pcall(function()
+		if player.Character then
+			player.Character:BreakJoints()
+		end
+	end)
+
+	task.wait(2.5)
+
+	-- Spawn xe
 	local gui = player.PlayerGui
 	pcall(function()
 		clickGui(gui.Main_User_Interface.UI_Frame.Buttons.Spawn)
-		task.wait(1.5)
+		task.wait(1.4)
 
 		for _, v in pairs(gui.Main_User_Interface.Garage.Container.Vehicles:GetChildren()) do
 			if v:IsA("ImageButton") and v.Name ~= "Teleport" then
 				clickGui(v)
-				task.wait(2.5)
-				print("[Recovery] ✅ Spawn xe thành công")
-				stuckCounter = 0
-				task.delay(10, function() justSpawned = false end)
-				return
+				task.wait(2)
+				break
 			end
 		end
 	end)
+
+	task.wait(2)
+
+	-- Teleport vào Race8
+	pcall(function()
+		clickGui(gui.Main_User_Interface.Teleport.Container.Races.Race8.Container.Teleport)
+	end)
+
+	print("[Reset] ✅ Đã reset hoàn tất")
 end
 
 -- ================== ĐÓNG MODAL ==================
@@ -157,19 +158,23 @@ local function mainAutoFarm()
 		task.wait(0.8) return
 	end
 
-	-- Kiểm tra trạng thái
-	local isRacing = gui.Races.Container.Visible
-	local hasCar = hasValidCar()
-
-	-- Chỉ trigger khi thật sự kẹt lâu
-	if (not isRacing and not hasCar) or (not gui:FindFirstChild("A-Chassis Interface")) then
-		stuckCounter = stuckCounter + 1
-		if stuckCounter >= 12 and not justSpawned and (now - lastValidCarTime > 20) then
-			forceSpawnCar()
-			stuckCounter = 0
+	-- Kiểm tra kẹt theo tiến độ
+	local currentProgress = _G.raceProgress or "0/12"
+	if currentProgress == lastProgress then
+		if stuckStartTime == 0 then stuckStartTime = now end
+		if now - stuckStartTime > STUCK_THRESHOLD then
+			print("[Stuck] ⏰ Kẹt quá lâu → Reset")
+			fullReset()
+			stuckStartTime = 0
 		end
 	else
-		stuckCounter = 0
+		stuckStartTime = 0
+		lastProgress = currentProgress
+	end
+
+	-- Reset định kỳ
+	if now - lastResetTime > RESET_INTERVAL then
+		fullReset()
 	end
 
 	-- Spawn xe nếu chưa có A-Chassis
@@ -185,8 +190,8 @@ local function mainAutoFarm()
 	end
 
 	-- Teleport vào Race8
-	if not gui.Races.Container.Visible and not hasCar then
-		if now - lastTeleportTime > 7 then
+	if not gui.Races.Container.Visible then
+		if now - lastTeleportTime > 6 then
 			lastTeleportTime = now
 			clickGui(gui.Main_User_Interface.Teleport.Container.Races.Race8.Container.Teleport)
 			task.wait(2.5)
@@ -198,21 +203,16 @@ local function mainAutoFarm()
 	MyRace = nil
 	for _, race in pairs(workspace.Races:GetDescendants()) do
 		if race:FindFirstChild("Racers") and race.Racers:FindFirstChild(player.Name) then
-			MyRace = race 
-			break
+			MyRace = race break
 		end
 	end
 
-	if not MyRace then 
-		MyCar = nil 
-		return 
-	end
+	if not MyRace then return end
 
 	local racer = MyRace.Racers:FindFirstChild(player.Name)
 	if not racer then return end
 
 	MyCar = racer:FindFirstChild("Vehicle") and racer.Vehicle.Value
-
 	if not MyCar or not MyCar.PrimaryPart then return end
 
 	local currentCP = racer:GetAttribute("Checkpoint") or 0
@@ -261,6 +261,7 @@ end
 
 -- ================== SUB LOOPS ==================
 local function runSubLoops()
+	-- Khóa ghế
 	task.spawn(function()
 		while task.wait(0.03) do
 			pcall(function()
@@ -276,6 +277,7 @@ local function runSubLoops()
 		end
 	end)
 
+	-- Noclip
 	task.spawn(function()
 		while task.wait(0.2) do
 			if MyCar and MyCar.Parent then
@@ -286,12 +288,14 @@ local function runSubLoops()
 		end
 	end)
 
+	-- Đóng modal
 	task.spawn(function()
 		while task.wait(1.5) do
 			closeRewardModal()
 		end
 	end)
 
+	-- Anti-AFK
 	task.spawn(function()
 		while task.wait(35) do
 			pcall(function()
@@ -303,7 +307,7 @@ local function runSubLoops()
 end
 
 -- ================== KHỞI CHẠY ==================
-print("[System] 🚀 Đã fix Force Spawn lặp liên tục")
+print("[System] 🚀 Đã chuyển sang cơ chế Timer Reset")
 
 fixLag()
 task.wait(2)
@@ -329,4 +333,4 @@ task.spawn(function()
 	end
 end)
 
-print("[System] ✅ Force Spawn đã được kiểm soát chặt chẽ")
+print("[System] ✅ Đang dùng Timer Reset (mỗi 3 phút reset 1 lần)")
