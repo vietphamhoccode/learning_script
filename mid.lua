@@ -25,6 +25,7 @@ local lastUpdate = 0
 local lastSpawnAttempt = 0
 local stuckCounter = 0
 local justSpawned = false
+local lastValidCarTime = 0
 
 -- ================== HÀM ==================
 local function clickGui(obj)
@@ -78,25 +79,24 @@ local function fixLag()
 	end)
 end
 
--- ================== KIỂM TRA CÓ ĐANG CÓ XE THẬT KHÔNG ==================
+-- ================== KIỂM TRA XE CHÍNH XÁC HƠN ==================
 local function hasValidCar()
-	if not MyCar then return false end
-	if not MyCar.Parent then return false end
-	if not MyCar.PrimaryPart then return false end
-	
-	local seat = MyCar:FindFirstChildWhichIsA("VehicleSeat", true) or MyCar:FindFirstChildWhichIsA("Seat", true)
-	local hum = player.Character and player.Character:FindFirstChildOfClass("Humanoid")
-	
-	if seat and hum and hum.Sit then
-		return true
+	if MyCar and MyCar.Parent and MyCar.PrimaryPart then
+		local seat = MyCar:FindFirstChildWhichIsA("VehicleSeat", true) or MyCar:FindFirstChildWhichIsA("Seat", true)
+		local hum = player.Character and player.Character:FindFirstChildOfClass("Humanoid")
+		
+		if seat and hum and hum.Sit then
+			lastValidCarTime = tick()
+			return true
+		end
 	end
 	return false
 end
 
--- ================== FORCE SPAWN XE (ĐÃ FIX) ==================
+-- ================== FORCE SPAWN (ĐÃ GIẢM TẦN SUẤT) ==================
 local function forceSpawnCar()
 	local now = tick()
-	if now - lastSpawnAttempt < 12 then return end
+	if now - lastSpawnAttempt < 15 then return end  -- Tăng debounce lên 15 giây
 	lastSpawnAttempt = now
 	justSpawned = true
 
@@ -105,15 +105,15 @@ local function forceSpawnCar()
 	local gui = player.PlayerGui
 	pcall(function()
 		clickGui(gui.Main_User_Interface.UI_Frame.Buttons.Spawn)
-		task.wait(1.4)
+		task.wait(1.5)
 
 		for _, v in pairs(gui.Main_User_Interface.Garage.Container.Vehicles:GetChildren()) do
 			if v:IsA("ImageButton") and v.Name ~= "Teleport" then
 				clickGui(v)
-				task.wait(2.2)
-				print("[Recovery] ✅ Đã spawn xe")
+				task.wait(2.5)
+				print("[Recovery] ✅ Spawn xe thành công")
 				stuckCounter = 0
-				task.delay(8, function() justSpawned = false end)
+				task.delay(10, function() justSpawned = false end)
 				return
 			end
 		end
@@ -157,13 +157,14 @@ local function mainAutoFarm()
 		task.wait(0.8) return
 	end
 
-	-- Kiểm tra kẹt xe (CHÍNH XÁC HƠN)
+	-- Kiểm tra trạng thái
 	local isRacing = gui.Races.Container.Visible
 	local hasCar = hasValidCar()
 
+	-- Chỉ trigger khi thật sự kẹt lâu
 	if (not isRacing and not hasCar) or (not gui:FindFirstChild("A-Chassis Interface")) then
 		stuckCounter = stuckCounter + 1
-		if stuckCounter >= 10 and not justSpawned then  -- Tăng ngưỡng lên 10 (~20-25 giây)
+		if stuckCounter >= 12 and not justSpawned and (now - lastValidCarTime > 20) then
 			forceSpawnCar()
 			stuckCounter = 0
 		end
@@ -184,8 +185,8 @@ local function mainAutoFarm()
 	end
 
 	-- Teleport vào Race8
-	if not gui.Races.Container.Visible and not hasValidCar() then
-		if now - lastTeleportTime > 6 then
+	if not gui.Races.Container.Visible and not hasCar then
+		if now - lastTeleportTime > 7 then
 			lastTeleportTime = now
 			clickGui(gui.Main_User_Interface.Teleport.Container.Races.Race8.Container.Teleport)
 			task.wait(2.5)
@@ -211,6 +212,7 @@ local function mainAutoFarm()
 	if not racer then return end
 
 	MyCar = racer:FindFirstChild("Vehicle") and racer.Vehicle.Value
+
 	if not MyCar or not MyCar.PrimaryPart then return end
 
 	local currentCP = racer:GetAttribute("Checkpoint") or 0
@@ -259,7 +261,6 @@ end
 
 -- ================== SUB LOOPS ==================
 local function runSubLoops()
-	-- Khóa ghế
 	task.spawn(function()
 		while task.wait(0.03) do
 			pcall(function()
@@ -275,7 +276,6 @@ local function runSubLoops()
 		end
 	end)
 
-	-- Noclip
 	task.spawn(function()
 		while task.wait(0.2) do
 			if MyCar and MyCar.Parent then
@@ -286,14 +286,12 @@ local function runSubLoops()
 		end
 	end)
 
-	-- Đóng modal
 	task.spawn(function()
 		while task.wait(1.5) do
 			closeRewardModal()
 		end
 	end)
 
-	-- Anti-AFK
 	task.spawn(function()
 		while task.wait(35) do
 			pcall(function()
@@ -305,7 +303,7 @@ local function runSubLoops()
 end
 
 -- ================== KHỞI CHẠY ==================
-print("[System] 🚀 Đã fix lỗi Force Spawn liên tục khi đang có xe")
+print("[System] 🚀 Đã fix Force Spawn lặp liên tục")
 
 fixLag()
 task.wait(2)
@@ -331,4 +329,4 @@ task.spawn(function()
 	end
 end)
 
-print("[System] ✅ Đã tối ưu phát hiện xe - Không còn force spawn khi đang đua")
+print("[System] ✅ Force Spawn đã được kiểm soát chặt chẽ")
