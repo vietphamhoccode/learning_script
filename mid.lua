@@ -1,6 +1,6 @@
--- ================== FULL SCRIPT TỐI ƯU + BỎ RESET NHÂN VẬT + TELEPORT TRỰC TIẾP ==================
--- Phiên bản v2.4 - Hoàn thành đua → teleport ngay (vẫn ngồi xe), không reset nhân vật
--- Tối ưu RAM cực thấp | Chống chồng chéo | Ngưỡng stuck 300 giây
+-- ================== FULL SCRIPT - ĐÃ XÓA TOÀN BỘ RESET NHÂN VẬT ==================
+-- Phiên bản v2.5 - KHÔNG CÒN RESET CHARTER / BREAKJOINTS
+-- Hoàn thành đua → teleport về Race8 ngay (vẫn ngồi trên xe)
 
 local Players = game:GetService("Players")
 local HttpService = game:GetService("HttpService")
@@ -8,7 +8,6 @@ local VirtualUser = game:GetService("VirtualUser")
 local player = Players.LocalPlayer
 while not player do task.wait(0.5) player = Players.LocalPlayer end
 
--- ================== BẢO VỆ CHỐNG CHỒNG CHÉO ==================
 if _G.AutoFarmV2_Running then
     print("[System] ⚠️ Phát hiện script cũ đang chạy → Đang dừng...")
     _G.AutoFarmV2_Running = false
@@ -16,31 +15,23 @@ if _G.AutoFarmV2_Running then
 end
 _G.AutoFarmV2_Running = true
 
--- ================== CẤU HÌNH ==================
 local API_URL = "https://vietpham.shop/api.php"
 local HEARTBEAT_INTERVAL = 3
-local RESET_INTERVAL = 180
-local STUCK_THRESHOLD = 300
 _G.savedPlaceId = _G.savedPlaceId or game.PlaceId
 _G.savedServerId = _G.savedServerId or game.JobId
 _G.raceProgress = "N/A"
 local http_request = request or http_request or (syn and syn.request) or (fluxus and fluxus.request)
 
--- ================== BIẾN ==================
 local MyCar = nil
 local MyRace = nil
 local lastFinishTime = 0
 local lastTeleportTime = 0
 local lastUpdate = 0
-local lastResetTime = 0
-local lastProgress = "0/12"
-local stuckStartTime = 0
-local lastNoclipCar = nil
 local lastClaimTime = 0
 local lastCloseTime = 0
 local lastAFKTime = 0
+local lastNoclipCar = nil
 
--- ================== HÀM ==================
 local function clickGui(obj)
     if not obj then return end
     pcall(function()
@@ -88,31 +79,6 @@ local function fixLag()
     end)
 end
 
--- ================== RESET TOÀN BỘ (KHÔNG RESET NHÂN VẬT) ==================
-local function fullReset()
-    local now = tick()
-    if now - lastResetTime < 25 then return end
-    lastResetTime = now
-    task.wait(1)
-    local gui = player.PlayerGui
-    pcall(function()
-        clickGui(gui.Main_User_Interface.UI_Frame.Buttons.Spawn)
-        task.wait(1.4)
-        for _, v in ipairs(gui.Main_User_Interface.Garage.Container.Vehicles:GetChildren()) do
-            if v:IsA("ImageButton") and v.Name ~= "Teleport" then
-                clickGui(v)
-                task.wait(2)
-                break
-            end
-        end
-    end)
-    task.wait(2)
-    pcall(function()
-        clickGui(gui.Main_User_Interface.Teleport.Container.Races.Race8.Container.Teleport)
-    end)
-end
-
--- ================== NHẬN THƯỞNG ==================
 local function claimRewards()
     pcall(function()
         local gui = player.PlayerGui
@@ -149,7 +115,6 @@ local function closeRewardModal()
     end)
 end
 
--- ================== MAIN AUTO FARM ==================
 local function mainAutoFarm()
     if not _G.AutoFarmV2_Running then return end
     local gui = player.PlayerGui
@@ -185,18 +150,6 @@ local function mainAutoFarm()
     for _, race in ipairs(workspace.Races:GetDescendants()) do
         if race:FindFirstChild("Racers") and race.Racers:FindFirstChild(player.Name) then MyRace = race break end
     end
-
-    if not MyRace then
-        local currentProgress = _G.raceProgress or "0/12"
-        if currentProgress == lastProgress then
-            if stuckStartTime == 0 then stuckStartTime = now end
-            if now - stuckStartTime > STUCK_THRESHOLD then fullReset() stuckStartTime = 0 end
-        else
-            stuckStartTime = 0 lastProgress = currentProgress
-        end
-        if now - lastResetTime > RESET_INTERVAL then fullReset() end
-    end
-
     if not MyRace then return end
 
     local racer = MyRace.Racers:FindFirstChild(player.Name)
@@ -209,23 +162,6 @@ local function mainAutoFarm()
     local totalCP = MyRace:FindFirstChild("Checkpoints") and MyRace.Checkpoints.Value or 12
     _G.raceProgress = currentCP .. "/" .. totalCP
 
-    if currentCP <= 1 then
-        if currentCP == lastProgress then
-            if stuckStartTime == 0 then stuckStartTime = now end
-            if now - stuckStartTime > 300 then
-                print("[Stuck] ⏰ Kẹt quá 5 phút → Reset")
-                fullReset()
-                stuckStartTime = 0
-            end
-        else
-            stuckStartTime = 0
-            lastProgress = currentCP
-        end
-    else
-        stuckStartTime = 0
-        lastProgress = currentCP
-    end
-
     if MyCar ~= lastNoclipCar then
         lastNoclipCar = MyCar
         for _, v in ipairs(MyCar:GetDescendants()) do if v:IsA("BasePart") then v.CanCollide = false end end
@@ -237,7 +173,6 @@ local function mainAutoFarm()
         if seat then player.Character:PivotTo(seat.CFrame * CFrame.new(0, 2, 0)) seat:Sit(hum) end
     end
 
-    -- ================== HOÀN THÀNH ĐUA → TELEPORT NGAY (KHÔNG RESET NHÂN VẬT) ==================
     if currentCP >= totalCP then
         if now - lastFinishTime > 4 then
             lastFinishTime = now
@@ -270,8 +205,7 @@ local function mainAutoFarm()
     end
 end
 
--- ================== KHỞI CHẠY ==================
-print("[System] 🚀 FULL SCRIPT v2.4 đã sẵn sàng!")
+print("[System] 🚀 SCRIPT ĐÃ XÓA TOÀN BỘ RESET NHÂN VẬT - v2.5")
 
 fixLag()
 task.wait(2)
@@ -314,4 +248,4 @@ task.spawn(function()
     end
 end)
 
-print("[System] ✅ Đã chạy thành công! Hoàn thành đua → teleport ngay, không reset nhân vật.")
+print("[System] ✅ Hoàn tất! KHÔNG CÒN RESET NHÂN VẬT NỮA.")
