@@ -24,6 +24,7 @@ local lastTeleportTime = 0
 local lastUpdate = 0
 local lastSpawnAttempt = 0
 local stuckCounter = 0
+local justSpawned = false  -- <--- Anti reset ngay sau spawn
 
 -- ================== HÀM ==================
 local function clickGui(obj)
@@ -77,37 +78,30 @@ local function fixLag()
 	end)
 end
 
--- ================== FORCE SPAWN XE KHI BỊ KẸT ==================
+-- ================== FORCE SPAWN XE (ĐÃ FIX) ==================
 local function forceSpawnCar()
 	local now = tick()
-	if now - lastSpawnAttempt < 8 then return end
+	if now - lastSpawnAttempt < 10 then return end
 	lastSpawnAttempt = now
+	justSpawned = true
 
-	print("[Recovery] 🔄 Phát hiện kẹt xe → Force Spawn lại")
+	print("[Recovery] 🔄 Force Spawn xe...")
 
 	local gui = player.PlayerGui
 
-	-- Mở Garage & Spawn
 	pcall(function()
 		clickGui(gui.Main_User_Interface.UI_Frame.Buttons.Spawn)
-		task.wait(1.2)
+		task.wait(1.3)
 
 		for _, v in pairs(gui.Main_User_Interface.Garage.Container.Vehicles:GetChildren()) do
 			if v:IsA("ImageButton") and v.Name ~= "Teleport" then
 				clickGui(v)
-				task.wait(1.8)
-				print("[Recovery] ✅ Đã spawn xe thành công")
+				task.wait(2.0)
+				print("[Recovery] ✅ Spawn xe thành công")
 				stuckCounter = 0
-				return true
+				task.delay(6, function() justSpawned = false end)  -- Cho phép reset sau 6 giây
+				return
 			end
-		end
-	end)
-
-	-- Nếu vẫn không có xe thì reset nhân vật
-	task.wait(2)
-	pcall(function()
-		if player.Character then
-			player.Character:BreakJoints()
 		end
 	end)
 end
@@ -117,7 +111,7 @@ local function closeRewardModal()
 	pcall(function()
 		local gui = player.PlayerGui
 		for _, modal in pairs(gui:GetDescendants()) do
-			if modal.Name:find("Reward") or modal.Name:find("Result") or modal.Name:find("Complete") then
+			if modal.Name:find("Reward") or modal.Name:find("Result") or modal.Name:find("Complete") or modal.Name:find("Finish") then
 				for _, btn in pairs(modal:GetDescendants()) do
 					if btn:IsA("TextButton") or btn:IsA("ImageButton") then
 						local text = btn.Text or ""
@@ -149,24 +143,24 @@ local function mainAutoFarm()
 		task.wait(0.8) return
 	end
 
-	-- Kiểm tra xem có bị kẹt không (không có xe + không vào race)
+	-- Kiểm tra kẹt xe
 	if not gui:FindFirstChild("A-Chassis Interface") or (not MyCar and not gui.Races.Container.Visible) then
 		stuckCounter = stuckCounter + 1
-		if stuckCounter >= 6 then  -- Kẹt ~15-18 giây
+		if stuckCounter >= 8 and not justSpawned then   -- Tăng ngưỡng + tránh reset ngay sau spawn
 			forceSpawnCar()
 			stuckCounter = 0
 		end
 	else
-		stuckCounter = 0
+		stuckCounter = math.max(0, stuckCounter - 1)
 	end
 
-	-- Spawn xe nếu chưa có
+	-- Spawn xe nếu chưa có giao diện A-Chassis
 	if not gui:FindFirstChild("A-Chassis Interface") then
 		clickGui(gui.Main_User_Interface.UI_Frame.Buttons.Spawn)
 		task.wait(1.2)
 		for _, v in pairs(gui.Main_User_Interface.Garage.Container.Vehicles:GetChildren()) do
 			if v:IsA("ImageButton") and v.Name ~= "Teleport" then
-				clickGui(v) task.wait(1.6) break
+				clickGui(v) task.wait(1.8) break
 			end
 		end
 		return
@@ -174,10 +168,10 @@ local function mainAutoFarm()
 
 	-- Teleport vào Race8
 	if not gui.Races.Container.Visible and (not MyRace or not MyCar) then
-		if now - lastTeleportTime > 5 then
+		if now - lastTeleportTime > 6 then
 			lastTeleportTime = now
 			clickGui(gui.Main_User_Interface.Teleport.Container.Races.Race8.Container.Teleport)
-			task.wait(2.2)
+			task.wait(2.5)
 		end
 		return
 	end
@@ -210,11 +204,11 @@ local function mainAutoFarm()
 		if now - lastFinishTime > 4 then
 			lastFinishTime = now
 			print("[Race] ✅ Hoàn thành! Đóng modal...")
-			task.wait(1)
+			task.wait(1.2)
 			closeRewardModal()
 			task.wait(1)
 			pcall(function() if player.Character then player.Character:BreakJoints() end end)
-			task.wait(1.2)
+			task.wait(1.5)
 			clickGui(gui.Main_User_Interface.Teleport.Container.Races.Race8.Container.Teleport)
 		end
 		return
@@ -247,7 +241,6 @@ end
 
 -- ================== SUB LOOPS ==================
 local function runSubLoops()
-	-- Khóa ghế
 	task.spawn(function()
 		while task.wait(0.03) do
 			pcall(function()
@@ -263,7 +256,6 @@ local function runSubLoops()
 		end
 	end)
 
-	-- Noclip
 	task.spawn(function()
 		while task.wait(0.18) do
 			if MyCar then
@@ -274,14 +266,12 @@ local function runSubLoops()
 		end
 	end)
 
-	-- Đóng modal
 	task.spawn(function()
 		while task.wait(1.5) do
 			closeRewardModal()
 		end
 	end)
 
-	-- Anti-AFK
 	task.spawn(function()
 		while task.wait(35) do
 			pcall(function()
@@ -293,7 +283,7 @@ local function runSubLoops()
 end
 
 -- ================== KHỞI CHẠY ==================
-print("[System] 🚀 Đã thêm Anti-Stuck + Force Spawn Xe")
+print("[System] 🚀 Đã fix lỗi spawn xe xong bị reset ngay")
 
 fixLag()
 task.wait(2)
@@ -319,4 +309,4 @@ task.spawn(function()
 	end
 end)
 
-print("[System] ✅ Script đã có cơ chế khôi phục khi không spawn được xe")
+print("[System] ✅ Script ổn định - Đã chống reset sau spawn")
