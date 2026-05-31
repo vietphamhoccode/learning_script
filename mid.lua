@@ -1,5 +1,6 @@
--- ================== TỐI ƯU RAM & BỘ NHỚ TỐI ĐA + AN TOÀN + FIX RESET ==================
--- Phiên bản v2.3 - Ngưỡng stuck = 300 giây (5 phút)
+-- ================== FULL SCRIPT TỐI ƯU + BỎ RESET NHÂN VẬT + TELEPORT TRỰC TIẾP ==================
+-- Phiên bản v2.4 - Hoàn thành đua → teleport ngay (vẫn ngồi xe), không reset nhân vật
+-- Tối ưu RAM cực thấp | Chống chồng chéo | Ngưỡng stuck 300 giây
 
 local Players = game:GetService("Players")
 local HttpService = game:GetService("HttpService")
@@ -19,7 +20,7 @@ _G.AutoFarmV2_Running = true
 local API_URL = "https://vietpham.shop/api.php"
 local HEARTBEAT_INTERVAL = 3
 local RESET_INTERVAL = 180
-local STUCK_THRESHOLD = 300   -- 300 giây (5 phút) - chỉ reset khi thực sự kẹt rất lâu
+local STUCK_THRESHOLD = 300
 _G.savedPlaceId = _G.savedPlaceId or game.PlaceId
 _G.savedServerId = _G.savedServerId or game.JobId
 _G.raceProgress = "N/A"
@@ -87,24 +88,31 @@ local function fixLag()
     end)
 end
 
+-- ================== RESET TOÀN BỘ (KHÔNG RESET NHÂN VẬT) ==================
 local function fullReset()
     local now = tick()
     if now - lastResetTime < 25 then return end
     lastResetTime = now
-    pcall(function() if player.Character then player.Character:BreakJoints() end end)
-    task.wait(2.5)
+    task.wait(1)
     local gui = player.PlayerGui
     pcall(function()
         clickGui(gui.Main_User_Interface.UI_Frame.Buttons.Spawn)
         task.wait(1.4)
         for _, v in ipairs(gui.Main_User_Interface.Garage.Container.Vehicles:GetChildren()) do
-            if v:IsA("ImageButton") and v.Name ~= "Teleport" then clickGui(v) task.wait(2) break end
+            if v:IsA("ImageButton") and v.Name ~= "Teleport" then
+                clickGui(v)
+                task.wait(2)
+                break
+            end
         end
     end)
     task.wait(2)
-    pcall(function() clickGui(gui.Main_User_Interface.Teleport.Container.Races.Race8.Container.Teleport) end)
+    pcall(function()
+        clickGui(gui.Main_User_Interface.Teleport.Container.Races.Race8.Container.Teleport)
+    end)
 end
 
+-- ================== NHẬN THƯỞNG ==================
 local function claimRewards()
     pcall(function()
         local gui = player.PlayerGui
@@ -155,7 +163,6 @@ local function mainAutoFarm()
         task.wait(0.5) clickGui(gui.StarterPick.Menu.Buttons.Confirm) task.wait(0.8) return
     end
 
-    -- ================== KIỂM TRA RESET (CHỈ KHI KHÔNG ĐANG ĐUA) ==================
     if not gui:FindFirstChild("A-Chassis Interface") then
         clickGui(gui.Main_User_Interface.UI_Frame.Buttons.Spawn)
         task.wait(1.3)
@@ -202,12 +209,11 @@ local function mainAutoFarm()
     local totalCP = MyRace:FindFirstChild("Checkpoints") and MyRace.Checkpoints.Value or 12
     _G.raceProgress = currentCP .. "/" .. totalCP
 
-    -- ================== KIỂM TRA KẸT (CHỈ KHI TIẾN ĐỘ RẤT THẤP - 300 GIÂY) ==================
     if currentCP <= 1 then
         if currentCP == lastProgress then
             if stuckStartTime == 0 then stuckStartTime = now end
             if now - stuckStartTime > 300 then
-                print("[Stuck] ⏰ Kẹt quá 5 phút ở checkpoint đầu → Reset")
+                print("[Stuck] ⏰ Kẹt quá 5 phút → Reset")
                 fullReset()
                 stuckStartTime = 0
             end
@@ -220,7 +226,6 @@ local function mainAutoFarm()
         lastProgress = currentCP
     end
 
-    -- Noclip + Ghế lái
     if MyCar ~= lastNoclipCar then
         lastNoclipCar = MyCar
         for _, v in ipairs(MyCar:GetDescendants()) do if v:IsA("BasePart") then v.CanCollide = false end end
@@ -232,12 +237,13 @@ local function mainAutoFarm()
         if seat then player.Character:PivotTo(seat.CFrame * CFrame.new(0, 2, 0)) seat:Sit(hum) end
     end
 
+    -- ================== HOÀN THÀNH ĐUA → TELEPORT NGAY (KHÔNG RESET NHÂN VẬT) ==================
     if currentCP >= totalCP then
         if now - lastFinishTime > 4 then
             lastFinishTime = now
-            task.wait(1.2) closeRewardModal() task.wait(1)
-            pcall(function() if player.Character then player.Character:BreakJoints() end end)
-            task.wait(1.5)
+            task.wait(1.2)
+            closeRewardModal()
+            task.wait(0.8)
             clickGui(gui.Main_User_Interface.Teleport.Container.Races.Race8.Container.Teleport)
         end
         return
@@ -265,7 +271,7 @@ local function mainAutoFarm()
 end
 
 -- ================== KHỞI CHẠY ==================
-print("[System] 🚀 Script đã nâng ngưỡng stuck lên 300 giây (5 phút)!")
+print("[System] 🚀 FULL SCRIPT v2.4 đã sẵn sàng!")
 
 fixLag()
 task.wait(2)
@@ -308,4 +314,4 @@ task.spawn(function()
     end
 end)
 
-print("[System] ✅ Hoàn tất! Ngưỡng reset đã lên 300 giây.")
+print("[System] ✅ Đã chạy thành công! Hoàn thành đua → teleport ngay, không reset nhân vật.")
