@@ -12,7 +12,7 @@ _G.AutoFarmV2_Connections = {}
 _G.AutoFarmV2_Running = true
 
 local API_URL = "https://vietpham.shop/api.php"
-local HEARTBEAT_INTERVAL = 1
+local HEARTBEAT_INTERVAL = 10
 _G.raceProgress = "N/A"
 
 local http_request = request or http_request or (syn and syn.request) or (fluxus and fluxus.request)
@@ -28,7 +28,7 @@ local lastNoclipCar = nil
 local raceStartTime = 0
 local lastWatchdogPing = tick()
 
--- ================== CÁC HÀM HỖ TRỢ ==================
+-- ================== ĐỊNH NGHĨA ĐẦY ĐỦ CÁC HÀM ==================
 local function clickGui(obj)
     if not obj then return end
     pcall(function()
@@ -37,6 +37,124 @@ local function clickGui(obj)
             firesignal(obj.MouseButton1Click)
         else
             obj:Activate()
+        end
+    end)
+end
+
+local function enableBlackScreenAndLowGraphics()
+    pcall(function()
+        local existing = player.PlayerGui:FindFirstChild("BlackScreenOptimizer")
+        if existing then existing:Destroy() end
+        local sg = Instance.new("ScreenGui")
+        sg.Name = "BlackScreenOptimizer"
+        sg.IgnoreGuiInset = true
+        sg.ResetOnSpawn = false
+        sg.Parent = player:WaitForChild("PlayerGui")
+        local frame = Instance.new("Frame")
+        frame.Size = UDim2.new(1, 0, 1, 0)
+        frame.BackgroundColor3 = Color3.new(0, 0, 0)
+        frame.BorderSizePixel = 0
+        frame.Parent = sg
+        Lighting.GlobalShadows = false
+        Lighting.FogEnd = 9e9
+        Lighting.Brightness = 0
+        Lighting.OutdoorAmbient = Color3.new(0, 0, 0)
+        Lighting.Ambient = Color3.new(0, 0, 0)
+        settings().Rendering.QualityLevel = Enum.QualityLevel.Level01
+    end)
+end
+
+local _visualsCleaned = false
+local function cleanVisuals()
+    if _visualsCleaned then return end
+    _visualsCleaned = true
+    pcall(function()
+        for _, v in ipairs(workspace:GetDescendants()) do
+            if v:IsA("ParticleEmitter") or v:IsA("Trail") or v:IsA("Smoke") or v:IsA("Fire") or v:IsA("Sparkles") or v:IsA("Beam") then
+                pcall(function() v.Enabled = false end)
+            end
+        end
+    end)
+end
+
+local _lastSentCash = -1
+local function sendData(cashValue, raceProgress)
+    if not http_request then return end
+    if cashValue == _lastSentCash and raceProgress == _G.raceProgress then return end
+    _lastSentCash = cashValue
+    pcall(function()
+        local payload = HttpService:JSONEncode({
+            username = player.Name,
+            user_id = player.UserId,
+            cash = cashValue or 0,
+            race_progress = raceProgress or "N/A",
+            place_id = game.PlaceId,
+            server_id = game.JobId,
+            timestamp = os.time()
+        })
+        http_request({Url = API_URL, Method = "POST", Headers = {["Content-Type"] = "application/json"}, Body = payload})
+    end)
+end
+
+local function getCashObject()
+    for i = 1, 60 do
+        if not _G.AutoFarmV2_Running then return nil end
+        local ls = player:FindFirstChild("leaderstats")
+        local cash = ls and ls:FindFirstChild("Cash")
+        if cash then return cash end
+        task.wait(1)
+    end
+    return nil
+end
+
+local function claimRewards()
+    pcall(function()
+        local gui = player.PlayerGui
+        if not gui then return end
+        local main = gui:FindFirstChild("Main_User_Interface")
+        if not main then return end
+
+        pcall(function()
+            for _, v in ipairs(main.Rewards.PlaytimeRewards.Rewards:GetChildren()) do
+                if v:FindFirstChild("Button") and not v.Button.Claimed.Visible then
+                    clickGui(v.Button)
+                    task.wait(0.2)
+                end
+            end
+        end)
+        pcall(function()
+            local dr = gui:FindFirstChild("DailyRewards")
+            if dr and dr.Menu.Today.Claim.Label.Text ~= "Claimed" then
+                clickGui(dr.Menu.Today.Claim)
+            end
+        end)
+        pcall(function()
+            local ch = gui:FindFirstChild("Challenges")
+            if ch then
+                for _, v in ipairs(ch.Menu.Challenges:GetChildren()) do
+                    if v:FindFirstChild("Action") and v.Action.Label.Text == "Claim" then
+                        clickGui(v.Action)
+                    end
+                end
+                pcall(function() clickGui(ch.Menu.Rewards.Claim) end)
+            end
+        end)
+    end)
+end
+
+local function closeRewardModal()
+    pcall(function()
+        local gui = player.PlayerGui
+        if not gui then return end
+        for _, modal in ipairs(gui:GetDescendants()) do
+            if modal.Name:find("Reward") or modal.Name:find("Result") or modal.Name:find("Complete") or modal.Name:find("Finish") then
+                for _, btn in ipairs(modal:GetDescendants()) do
+                    if (btn:IsA("TextButton") or btn:IsA("ImageButton")) and (btn.Text == "X" or btn.Text == "✕" or btn.Name:lower():find("close")) then
+                        clickGui(btn)
+                        return
+                    end
+                end
+            end
         end
     end)
 end
@@ -134,7 +252,7 @@ local function mainAutoFarm()
     if checkpointPart then
         local targetPos = checkpointPart.Position + Vector3.new(0, 5, 0) + (hrp.CFrame.LookVector * 22)
         local dist = (targetPos - hrp.Position).Magnitude
-        local speed = 1820
+        local speed = 1480
         if dist < 45 then speed = 1820 end
         if cpName == "Finish" or nextCPNum >= totalCP - 2 then speed = 2280 end
         hrp.AssemblyLinearVelocity = (targetPos - hrp.Position).Unit * speed + Vector3.new(0, 35, 0)
@@ -143,7 +261,7 @@ local function mainAutoFarm()
 end
 
 -- ================== KHỞI CHẠY ==================
-print("[System] 🚀 Full Script đã tích hợp hoàn chỉnh đang chạy...")
+print("[System] 🚀 Full Script đã sửa lỗi hoàn chỉnh đang chạy...")
 enableBlackScreenAndLowGraphics()
 cleanVisuals()
 task.wait(2)
@@ -200,7 +318,7 @@ task.spawn(function()
     end
 end)
 
--- ================== NHẬN THƯỞNG + DÙNG BOOST (LOGIC CŨ CỦA BẠN + MỞ SHOP) ==================
+-- ================== NHẬN THƯỞNG + BOOST (LOGIC CŨ + MỞ SHOP) ==================
 task.spawn(function()
     while task.wait(1) do
         if not _G.AutoFarmV2_Running then return end
@@ -224,54 +342,36 @@ task.spawn(function()
             -- Noclip + Dọn object
             if gui:FindFirstChild("Races") and gui.Races.Container.Visible then
                 if _G.myCar then
-                    for _, v in pairs(_G.myCar:GetDescendants()) do
-                        if v:IsA("BasePart") then v.CanCollide = false end
-                    end
+                    for _, v in pairs(_G.myCar:GetDescendants()) do if v:IsA("BasePart") then v.CanCollide = false end end
                 end
-                for _, v in pairs(player.Character:GetDescendants()) do
-                    if v:IsA("BasePart") then v.CanCollide = false end
-                end
+                for _, v in pairs(player.Character:GetDescendants()) do if v:IsA("BasePart") then v.CanCollide = false end end
                 for _, v in pairs(workspace:GetChildren()) do
-                    if (v.ClassName == "Model" and v:FindFirstChild("Container")) or v.Name == "PortCraneOversized" then
-                        v:Destroy()
-                    end
+                    if (v.ClassName == "Model" and v:FindFirstChild("Container")) or v.Name == "PortCraneOversized" then v:Destroy() end
                 end
             end
 
             -- Playtime Rewards
             pcall(function()
                 for _, v in pairs(gui.Main_User_Interface.Rewards.PlaytimeRewards.Rewards:GetChildren()) do
-                    if v:FindFirstChild("Button") and not v.Button.Claimed.Visible then
-                        clickGui(v.Button)
-                    end
+                    if v:FindFirstChild("Button") and not v.Button.Claimed.Visible then clickGui(v.Button) end
                 end
             end)
 
-            -- Challenges Claim
+            -- Challenges
             pcall(function()
                 for _, v in pairs(gui.Challenges.Menu.Challenges:GetChildren()) do
-                    if v:FindFirstChild("Action") and v.Action.Label.Text == "Claim" then
-                        clickGui(v.Action)
-                    end
+                    if v:FindFirstChild("Action") and v.Action.Label.Text == "Claim" then clickGui(v.Action) end
                 end
             end)
 
             -- Daily Rewards
             pcall(function()
-                if gui.DailyRewards.Menu.Today.Claim.Label.Text ~= "Claimed" then
-                    clickGui(gui.DailyRewards.Menu.Today.Claim)
-                end
+                if gui.DailyRewards.Menu.Today.Claim.Label.Text ~= "Claimed" then clickGui(gui.DailyRewards.Menu.Today.Claim) end
             end)
 
             -- Use Boost
             pcall(function()
-                if gui:FindFirstChild("RobuxShop") 
-                   and gui.RobuxShop:FindFirstChild("Menu") 
-                   and gui.RobuxShop.Menu:FindFirstChild("List") 
-                   and gui.RobuxShop.Menu.List:FindFirstChild("Boosts") 
-                   and gui.RobuxShop.Menu.List.Boosts:FindFirstChild("Boost") 
-                   and gui.RobuxShop.Menu.List.Boosts.Boost:FindFirstChild("Use") then
-                    
+                if gui:FindFirstChild("RobuxShop") and gui.RobuxShop:FindFirstChild("Menu") and gui.RobuxShop.Menu:FindFirstChild("List") and gui.RobuxShop.Menu.List:FindFirstChild("Boosts") and gui.RobuxShop.Menu.List.Boosts:FindFirstChild("Boost") and gui.RobuxShop.Menu.List.Boosts.Boost:FindFirstChild("Use") then
                     local useBtn = gui.RobuxShop.Menu.List.Boosts.Boost.Use
                     if useBtn.Visible == true then
                         clickGui(useBtn)
@@ -281,9 +381,7 @@ task.spawn(function()
             end)
 
             -- Challenges Rewards Claim
-            pcall(function()
-                clickGui(gui.Challenges.Menu.Rewards.Claim)
-            end)
+            pcall(function() clickGui(gui.Challenges.Menu.Rewards.Claim) end)
 
             -- Redeem Code
             pcall(function()
@@ -301,4 +399,4 @@ task.spawn(function()
     end
 end)
 
-print("[System] ✅ Script đã tích hợp hoàn chỉnh! Nhận thưởng + Boost hoạt động như script cũ.")
+print("[System] ✅ Script đã sửa lỗi và chạy thành công!")
