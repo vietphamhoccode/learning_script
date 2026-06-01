@@ -28,7 +28,7 @@ local lastNoclipCar = nil
 local raceStartTime = 0
 local lastWatchdogPing = tick()
 
--- ================== ĐỊNH NGHĨA ĐẦY ĐỦ CÁC HÀM ==================
+-- ================== HÀM HỖ TRỢ ==================
 local function clickGui(obj)
     if not obj then return end
     pcall(function()
@@ -43,8 +43,8 @@ end
 
 local function enableBlackScreenAndLowGraphics()
     pcall(function()
-        local existing = player.PlayerGui:FindFirstChild("BlackScreenOptimizer")
-        if existing then existing:Destroy() end
+        local existingBs = player.PlayerGui:FindFirstChild("BlackScreenOptimizer")
+        if existingBs then existingBs:Destroy() end
         local sg = Instance.new("ScreenGui")
         sg.Name = "BlackScreenOptimizer"
         sg.IgnoreGuiInset = true
@@ -114,26 +114,32 @@ local function claimRewards()
         local main = gui:FindFirstChild("Main_User_Interface")
         if not main then return end
 
+        -- Playtime Rewards (tự động click tất cả Tier)
         pcall(function()
             for _, v in ipairs(main.Rewards.PlaytimeRewards.Rewards:GetChildren()) do
                 if v:FindFirstChild("Button") and not v.Button.Claimed.Visible then
                     clickGui(v.Button)
-                    task.wait(0.2)
+                    task.wait(0.15)
                 end
             end
         end)
+
+        -- Daily Rewards
         pcall(function()
             local dr = gui:FindFirstChild("DailyRewards")
             if dr and dr.Menu.Today.Claim.Label.Text ~= "Claimed" then
                 clickGui(dr.Menu.Today.Claim)
             end
         end)
+
+        -- Challenges
         pcall(function()
             local ch = gui:FindFirstChild("Challenges")
             if ch then
                 for _, v in ipairs(ch.Menu.Challenges:GetChildren()) do
                     if v:FindFirstChild("Action") and v.Action.Label.Text == "Claim" then
                         clickGui(v.Action)
+                        task.wait(0.1)
                     end
                 end
                 pcall(function() clickGui(ch.Menu.Rewards.Claim) end)
@@ -150,8 +156,7 @@ local function closeRewardModal()
             if modal.Name:find("Reward") or modal.Name:find("Result") or modal.Name:find("Complete") or modal.Name:find("Finish") then
                 for _, btn in ipairs(modal:GetDescendants()) do
                     if (btn:IsA("TextButton") or btn:IsA("ImageButton")) and (btn.Text == "X" or btn.Text == "✕" or btn.Name:lower():find("close")) then
-                        clickGui(btn)
-                        return
+                        clickGui(btn); return
                     end
                 end
             end
@@ -226,9 +231,7 @@ local function mainAutoFarm()
 
     if MyCar ~= lastNoclipCar then
         lastNoclipCar = MyCar
-        for _, v in ipairs(MyCar:GetDescendants()) do
-            if v:IsA("BasePart") then v.CanCollide = false end
-        end
+        for _, v in ipairs(MyCar:GetDescendants()) do if v:IsA("BasePart") then v.CanCollide = false end end
     end
 
     if currentCP >= totalCP then
@@ -261,7 +264,7 @@ local function mainAutoFarm()
 end
 
 -- ================== KHỞI CHẠY ==================
-print("[System] 🚀 Full Script đã sửa lỗi hoàn chỉnh đang chạy...")
+print("[System] 🚀 Full Script (Đã cập nhật theo log click của bạn) đang chạy...")
 enableBlackScreenAndLowGraphics()
 cleanVisuals()
 task.wait(2)
@@ -318,85 +321,53 @@ task.spawn(function()
     end
 end)
 
--- ================== NHẬN THƯỞNG + BOOST (LOGIC CŨ + MỞ SHOP) ==================
+-- ================== BOOST + NHẬN THƯỞNG TỰ ĐỘNG (THEO LOG CỦA BẠN) ==================
 task.spawn(function()
-    while task.wait(1) do
+    while task.wait(0.8) do
         if not _G.AutoFarmV2_Running then return end
         pcall(function()
             local gui = player.PlayerGui
             if not gui then return end
 
-            -- Mở Shop tự động
             local mainUI = gui:FindFirstChild("Main_User_Interface")
-            if mainUI then
-                local shopBtn = mainUI:FindFirstChild("RobuxShop")
-                if not shopBtn and mainUI:FindFirstChild("UI_Frame") and mainUI.UI_Frame:FindFirstChild("Buttons") then
-                    shopBtn = mainUI.UI_Frame.Buttons:FindFirstChild("Robux") or mainUI.UI_Frame.Buttons:FindFirstChild("Shop")
-                end
-                if shopBtn then
-                    clickGui(shopBtn)
-                    task.wait(0.5)
-                end
+            if not mainUI then return end
+
+            -- Mở Shop (dùng nút Store từ log)
+            local storeBtn = mainUI:FindFirstChild("UI_Frame") and mainUI.UI_Frame:FindFirstChild("Buttons") and mainUI.UI_Frame.Buttons:FindFirstChild("Store")
+            if storeBtn then
+                clickGui(storeBtn)
+                task.wait(0.5)
             end
 
-            -- Noclip + Dọn object
-            if gui:FindFirstChild("Races") and gui.Races.Container.Visible then
-                if _G.myCar then
-                    for _, v in pairs(_G.myCar:GetDescendants()) do if v:IsA("BasePart") then v.CanCollide = false end end
-                end
-                for _, v in pairs(player.Character:GetDescendants()) do if v:IsA("BasePart") then v.CanCollide = false end end
-                for _, v in pairs(workspace:GetChildren()) do
-                    if (v.ClassName == "Model" and v:FindFirstChild("Container")) or v.Name == "PortCraneOversized" then v:Destroy() end
+            -- Chọn Rewards trong Shop (từ log)
+            if gui:FindFirstChild("RobuxShop") and gui.RobuxShop:FindFirstChild("Menu") and gui.RobuxShop.Menu:FindFirstChild("Categories") then
+                local rewardsCat = gui.RobuxShop.Menu.Categories:FindFirstChild("Rewards")
+                if rewardsCat then
+                    clickGui(rewardsCat)
+                    task.wait(0.4)
                 end
             end
-
-            -- Playtime Rewards
-            pcall(function()
-                for _, v in pairs(gui.Main_User_Interface.Rewards.PlaytimeRewards.Rewards:GetChildren()) do
-                    if v:FindFirstChild("Button") and not v.Button.Claimed.Visible then clickGui(v.Button) end
-                end
-            end)
-
-            -- Challenges
-            pcall(function()
-                for _, v in pairs(gui.Challenges.Menu.Challenges:GetChildren()) do
-                    if v:FindFirstChild("Action") and v.Action.Label.Text == "Claim" then clickGui(v.Action) end
-                end
-            end)
-
-            -- Daily Rewards
-            pcall(function()
-                if gui.DailyRewards.Menu.Today.Claim.Label.Text ~= "Claimed" then clickGui(gui.DailyRewards.Menu.Today.Claim) end
-            end)
 
             -- Use Boost
-            pcall(function()
-                if gui:FindFirstChild("RobuxShop") and gui.RobuxShop:FindFirstChild("Menu") and gui.RobuxShop.Menu:FindFirstChild("List") and gui.RobuxShop.Menu.List:FindFirstChild("Boosts") and gui.RobuxShop.Menu.List.Boosts:FindFirstChild("Boost") and gui.RobuxShop.Menu.List.Boosts.Boost:FindFirstChild("Use") then
-                    local useBtn = gui.RobuxShop.Menu.List.Boosts.Boost.Use
-                    if useBtn.Visible == true then
-                        clickGui(useBtn)
-                        print("[Boost] ✅ Đã dùng Boost!")
-                    end
+            if gui:FindFirstChild("RobuxShop") and gui.RobuxShop:FindFirstChild("Menu") and gui.RobuxShop.Menu:FindFirstChild("List") and gui.RobuxShop.Menu.List:FindFirstChild("Boosts") and gui.RobuxShop.Menu.List.Boosts:FindFirstChild("Boost") and gui.RobuxShop.Menu.List.Boosts.Boost:FindFirstChild("Use") then
+                local useBtn = gui.RobuxShop.Menu.List.Boosts.Boost.Use
+                if useBtn.Visible == true then
+                    clickGui(useBtn)
+                    print("[Boost] ✅ Đã dùng Boost!")
                 end
-            end)
-
-            -- Challenges Rewards Claim
-            pcall(function() clickGui(gui.Challenges.Menu.Rewards.Claim) end)
+            end
 
             -- Redeem Code
-            pcall(function()
-                local codes = _G.codes or {"ThanksFor750k"}
-                for _, v in pairs(codes) do
-                    if gui:FindFirstChild("RobuxShop") then
-                        gui.RobuxShop.Menu.List.Rewards.Codes.Input.Text = v
-                        task.wait(0.2)
-                        clickGui(gui.RobuxShop.Menu.List.Rewards.Codes.Redeem)
-                        task.wait(0.2)
-                    end
+            if gui:FindFirstChild("RobuxShop") and gui.RobuxShop:FindFirstChild("Menu") and gui.RobuxShop.Menu:FindFirstChild("List") and gui.RobuxShop.Menu.List:FindFirstChild("Rewards") and gui.RobuxShop.Menu.List.Rewards:FindFirstChild("Codes") then
+                local redeem = gui.RobuxShop.Menu.List.Rewards.Codes:FindFirstChild("Redeem")
+                if redeem then
+                    gui.RobuxShop.Menu.List.Rewards.Codes.Input.Text = "ThanksFor810k"
+                    task.wait(0.2)
+                    clickGui(redeem)
                 end
-            end)
+            end
         end)
     end
 end)
 
-print("[System] ✅ Script đã sửa lỗi và chạy thành công!")
+print("[System] ✅ Script đã chạy thành công theo log click của bạn!")
