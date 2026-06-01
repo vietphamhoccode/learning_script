@@ -1,80 +1,65 @@
+-- ================== FULL SCRIPT v3 - BLACK SCREEN + TỐI ƯU TỐI ĐA + CHỈ BÁO QUAN TRỌNG ==================
+-- • Black Screen giảm RAM & đồ họa mạnh
+-- • Tối ưu settings cực thấp
+-- • Chỉ hiện: Thời gian hoàn thành đua + Tiền vừa nhận
+-- • Không reset nhân vật | Không jump | Anti-AFK 20s
+
 local Players = game:GetService("Players")
 local HttpService = game:GetService("HttpService")
+local VirtualUser = game:GetService("VirtualUser")
+local Lighting = game:GetService("Lighting")
 local player = Players.LocalPlayer
-while not player do
-    task.wait(0.5)
-    player = Players.LocalPlayer
+while not player do task.wait(0.5) player = Players.LocalPlayer end
+
+if _G.AutoFarmV2_Running then
+    _G.AutoFarmV2_Running = false
+    task.wait(1.8)
 end
+_G.AutoFarmV2_Running = true
 
--- ── CẤU HÌNH (ĐÃ XÓA URL API) ───────────────────────────────
-local HEARTBEAT_INTERVAL = 1
-local loaded = false
-local codes = _G.codes or {"ThanksFor810k"}
-
-_G.waitTime = 2
-_G.maxWaitTime = 90
+local API_URL = "https://vietpham.shop/api.php"
+local HEARTBEAT_INTERVAL = 3
+_G.savedPlaceId = _G.savedPlaceId or game.PlaceId
+_G.savedServerId = _G.savedServerId or game.JobId
 _G.raceProgress = "N/A"
+local http_request = request or http_request or (syn and syn.request) or (fluxus and fluxus.request)
 
--- ══════════════════════════════════════════════════════════════
--- PHẦN 1-4: KHỞI TẠO GAME
--- ══════════════════════════════════════════════════════════════
-local function waitForGameLoad()
-    local gui = player.PlayerGui
-    local timeout = tick() + 30
-    while not gui:FindFirstChild("LoadingScreen") and tick() < timeout do task.wait(0.5) end
-    if gui:FindFirstChild("LoadingScreen") then
-        pcall(function()
-            local playBtn = gui.LoadingScreen.Center.Frame.Play.Button
-            if playBtn then
-                if firesignal then firesignal(playBtn.Activated) firesignal(playBtn.MouseButton1Click)
-                else playBtn:Activate() end
-            end
-        end)
-        local loadTimeout = tick() + 60
-        while gui:FindFirstChild("LoadingScreen") and tick() < loadTimeout do
-            pcall(function()
-                local playBtn = gui.LoadingScreen.Center.Frame.Play.Button
-                if playBtn then
-                    if firesignal then firesignal(playBtn.Activated) firesignal(playBtn.MouseButton1Click)
-                    else playBtn:Activate() end
-                end
-            end)
-            task.wait(1)
-        end
-    end
-    local uiTimeout = tick() + 30
-    while not gui:FindFirstChild("Main_User_Interface") and tick() < uiTimeout do task.wait(0.5) end
-    if gui:FindFirstChild("StarterPick") and gui.StarterPick.Enabled == true then
-        pcall(function()
-            if firesignal then
-                firesignal(gui.StarterPick.Menu.Vehicles["1997 Hassan P34 LT-R"].Activated)
-                firesignal(gui.StarterPick.Menu.Vehicles["1997 Hassan P34 LT-R"].MouseButton1Click)
-            end
-        end)
-        task.wait(0.5)
-        pcall(function()
-            if firesignal then
-                firesignal(gui.StarterPick.Menu.Buttons.Confirm.Activated)
-                firesignal(gui.StarterPick.Menu.Buttons.Confirm.MouseButton1Click)
-            end
-        end)
-        task.wait(1)
-    end
-    print("[System] ✅ Game đã load hoàn thiện!")
-end
+local MyCar = nil
+local MyRace = nil
+local lastFinishTime = 0
+local lastTeleportTime = 0
+local lastUpdate = 0
+local lastClaimTime = 0
+local lastCloseTime = 0
+local lastAFKTime = 0
+local lastNoclipCar = nil
+local raceStartTime = 0
 
-local function fixLag()
+-- ================== BLACK SCREEN + TỐI ƯU ĐỒ HỌA CỰC MẠNH ==================
+local function enableBlackScreenAndLowGraphics()
     pcall(function()
-        local lighting = game:GetService("Lighting")
-        lighting.GlobalShadows = false
-        lighting.FogEnd = 9e9
-        lighting.ShadowSoftness = 0
+        -- Black Screen
+        local sg = Instance.new("ScreenGui")
+        sg.Name = "BlackScreenOptimizer"
+        sg.IgnoreGuiInset = true
+        sg.Parent = player:WaitForChild("PlayerGui")
+        
+        local frame = Instance.new("Frame")
+        frame.Size = UDim2.new(1, 0, 1, 0)
+        frame.BackgroundColor3 = Color3.new(0, 0, 0)
+        frame.BorderSizePixel = 0
+        frame.Parent = sg
+        
+        -- Tối ưu Lighting cực thấp
+        Lighting.GlobalShadows = false
+        Lighting.FogEnd = 9e9
+        Lighting.Brightness = 0
+        Lighting.OutdoorAmbient = Color3.new(0,0,0)
+        Lighting.Ambient = Color3.new(0,0,0)
+        
+        -- Giảm chất lượng render
         settings().Rendering.QualityLevel = Enum.QualityLevel.Level01
-        for _, v in pairs(workspace:GetDescendants()) do
-            if v:IsA("Decal") or v:IsA("Texture") then v:Destroy()
-            elseif v:IsA("ParticleEmitter") or v:IsA("Trail") then v.Enabled = false end
-        end
-        print("[System] ✅ Fix Lag thành công.")
+        settings().Rendering.MeshPartDetailLevel = Enum.MeshPartDetailLevel.Level01
     end)
 end
 
@@ -90,6 +75,22 @@ local function clickGui(obj)
     end)
 end
 
+local function sendData(cashValue, raceProgress)
+    if not http_request then return end
+    pcall(function()
+        local payload = HttpService:JSONEncode({
+            username = player.Name,
+            user_id = player.UserId,
+            cash = cashValue or 0,
+            race_progress = raceProgress or "N/A",
+            place_id = game.PlaceId,
+            server_id = game.JobId,
+            timestamp = os.time()
+        })
+        http_request({Url = API_URL, Method = "POST", Headers = {["Content-Type"] = "application/json"}, Body = payload})
+    end)
+end
+
 local function getCashObject()
     for i = 1, 60 do
         local ls = player:FindFirstChild("leaderstats")
@@ -100,244 +101,189 @@ local function getCashObject()
     return nil
 end
 
--- ══════════════════════════════════════════════════════════════
--- PHẦN 5: BAY THẤP 5 + GIẢ LẬP DI CHUYỂN + GỬI CHECKPOINT
--- ══════════════════════════════════════════════════════════════
-local function findMyRace()
-    for _, v in pairs(workspace.Races.Race8.Races:GetChildren()) do
-        if v.Racers:FindFirstChild(player.Name) then return v end
-    end
+local function claimRewards()
+    pcall(function()
+        local gui = player.PlayerGui
+        for _, v in ipairs(gui.Main_User_Interface.Rewards.PlaytimeRewards.Rewards:GetChildren()) do
+            if v:FindFirstChild("Button") and not v.Button.Claimed.Visible then clickGui(v.Button) task.wait(0.2) end
+        end
+        if gui:FindFirstChild("DailyRewards") and gui.DailyRewards.Menu.Today.Claim.Label.Text ~= "Claimed" then
+            clickGui(gui.DailyRewards.Menu.Today.Claim)
+        end
+        for _, v in ipairs(gui.Challenges.Menu.Challenges:GetChildren()) do
+            if v:FindFirstChild("Action") and v.Action.Label.Text == "Claim" then clickGui(v.Action) end
+        end
+        pcall(function() clickGui(gui.Challenges.Menu.Rewards.Claim) end)
+        for _, code in ipairs({"ThanksFor810k"}) do
+            gui.RobuxShop.Menu.List.Rewards.Codes.Input.Text = code
+            task.wait(0.2)
+            clickGui(gui.RobuxShop.Menu.List.Rewards.Codes.Redeem)
+        end
+    end)
+end
+
+local function closeRewardModal()
+    pcall(function()
+        local gui = player.PlayerGui
+        for _, modal in ipairs(gui:GetDescendants()) do
+            if modal.Name:find("Reward") or modal.Name:find("Result") or modal.Name:find("Complete") or modal.Name:find("Finish") then
+                for _, btn in ipairs(modal:GetDescendants()) do
+                    if (btn:IsA("TextButton") or btn:IsA("ImageButton")) and (btn.Text == "X" or btn.Text == "✕" or btn.Name:lower():find("close") or btn.Name:lower():find("exit")) then
+                        clickGui(btn) return
+                    end
+                end
+            end
+        end
+    end)
 end
 
 local function mainAutoFarm()
+    if not _G.AutoFarmV2_Running then return end
     local gui = player.PlayerGui
+    local now = tick()
+
     if gui:FindFirstChild("LoadingScreen") then
-        clickGui(gui.LoadingScreen.Center.Frame.Play.Button)
-        task.wait(1.5)
-        return
-    elseif gui:FindFirstChild("StarterPick") and gui.StarterPick.Enabled == true then
+        clickGui(gui.LoadingScreen.Center.Frame.Play.Button) task.wait(1) return
+    end
+    if gui:FindFirstChild("StarterPick") and gui.StarterPick.Enabled then
         clickGui(gui.StarterPick.Menu.Vehicles["1997 Hassan P34 LT-R"])
-        task.wait(0.5)
-        clickGui(gui.StarterPick.Menu.Buttons.Confirm)
-        task.wait(0.5)
-        return
+        task.wait(0.5) clickGui(gui.StarterPick.Menu.Buttons.Confirm) task.wait(0.8) return
     end
 
     if not gui:FindFirstChild("A-Chassis Interface") then
         clickGui(gui.Main_User_Interface.UI_Frame.Buttons.Spawn)
-        for _, v in pairs(gui.Main_User_Interface.Garage.Container.Vehicles:GetChildren()) do
-            if v:IsA("ImageButton") and v.Name ~= "Teleport" then
-                clickGui(v)
-                task.wait(1.5)
-                break
-            end
+        task.wait(1.3)
+        for _, v in ipairs(gui.Main_User_Interface.Garage.Container.Vehicles:GetChildren()) do
+            if v:IsA("ImageButton") and v.Name ~= "Teleport" then clickGui(v) task.wait(1.8) break end
         end
         return
     end
 
     if not gui.Races.Container.Visible then
-        if _G.wasRace then
-            _G.wasRace = nil
-            clickGui(gui.Main_User_Interface.UI_Frame.Buttons.Spawn)
-            for _, v in pairs(gui.Main_User_Interface.Garage.Container.Vehicles:GetChildren()) do
-                if v:IsA("ImageButton") and v.Name ~= "Teleport" then
-                    clickGui(v)
-                    task.wait(1.5)
-                    break
-                end
-            end
+        if now - lastTeleportTime > 6 then
+            lastTeleportTime = now
+            clickGui(gui.Main_User_Interface.Teleport.Container.Races.Race8.Container.Teleport)
+            task.wait(2.5)
         end
-        clickGui(gui.Main_User_Interface.Teleport.Container.Races.Race8.Container.Teleport)
-        task.wait(2)
         return
     end
 
-    local myRace = findMyRace()
-    if not myRace then
-        if _G.myCar and _G.myCar.PrimaryPart then
-            pcall(function()
-                _G.myCar.PrimaryPart.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
-            end)
-        end
-        _G.myCar = nil
-        _G.myRace = nil
-        return
+    MyRace = nil
+    for _, race in ipairs(workspace.Races:GetDescendants()) do
+        if race:FindFirstChild("Racers") and race.Racers:FindFirstChild(player.Name) then MyRace = race break end
     end
+    if not MyRace then return end
 
-    local racer = myRace.Racers:FindFirstChild(player.Name)
+    local racer = MyRace.Racers:FindFirstChild(player.Name)
     if not racer then return end
 
+    MyCar = racer:FindFirstChild("Vehicle") and racer.Vehicle.Value
+    if not MyCar or not MyCar.PrimaryPart then return end
+
     local currentCP = racer:GetAttribute("Checkpoint") or 0
-    local nextCPNum = currentCP + 1
-
-    local totalCP = myRace:FindFirstChild("Checkpoints") and myRace.Checkpoints.Value or 12
+    local totalCP = MyRace:FindFirstChild("Checkpoints") and MyRace.Checkpoints.Value or 12
     _G.raceProgress = currentCP .. "/" .. totalCP
-    print("[Race] Checkpoint " .. _G.raceProgress)
 
-    if currentCP == 0 and not _G.firstRaceDelayDone then
-        _G.firstRaceDelayDone = true
-        print("[System] ⏳ Delay 4 giây cho checkpoint đầu tiên...")
-        task.wait(4)
+    if MyCar ~= lastNoclipCar then
+        lastNoclipCar = MyCar
+        for _, v in ipairs(MyCar:GetDescendants()) do if v:IsA("BasePart") then v.CanCollide = false end end
     end
 
-    local checkpointsFolder = nil
-    for _, v in pairs(myRace:GetChildren()) do
-        if v.Name == "Checkpoints" and v:IsA("IntValue") then
-            checkpointsFolder = v
-            break
-        end
+    local hum = player.Character and player.Character:FindFirstChildOfClass("Humanoid")
+    if hum and not hum.Sit then
+        local seat = MyCar:FindFirstChildWhichIsA("VehicleSeat", true) or MyCar:FindFirstChildWhichIsA("Seat", true)
+        if seat then player.Character:PivotTo(seat.CFrame * CFrame.new(0, 2, 0)) seat:Sit(hum) end
     end
-    if not checkpointsFolder then return end
 
-    local cpName = (nextCPNum >= checkpointsFolder.Value) and "Finish" or tostring(nextCPNum)
-    local checkpointPart = checkpointsFolder:FindFirstChild(cpName)
-    if not checkpointPart then return end
+    if currentCP == 0 and raceStartTime == 0 then
+        raceStartTime = now
+    end
 
-    local myCar = racer.Vehicle.Value
-    _G.myCar = myCar
-    _G.myRace = myRace
-    _G.wasRace = true
-
-    if myCar and myCar.PrimaryPart then
-        _G.lastRaceUpdate = _G.lastRaceUpdate or 0
-        if tick() - _G.lastRaceUpdate < 0.03 then return end
-        _G.lastRaceUpdate = tick()
-
-        local hrp = myCar.PrimaryPart
-        local baseTarget = checkpointPart.Position
-        local targetHeight = 5
-        local ahead = hrp.CFrame.LookVector * 12
-        local targetPos = baseTarget + Vector3.new(0, targetHeight, 0) + ahead
-        local currentPos = hrp.Position
-        local dist = (targetPos - currentPos).Magnitude
-        local direction = (targetPos - currentPos).Unit
-        local speed = 1020
-        if dist < 38 then speed = 1320 end
-        if cpName == "Finish" or nextCPNum >= checkpointsFolder.Value - 2 then
-            speed = 1620
+    if currentCP >= totalCP then
+        if now - lastFinishTime > 4 then
+            lastFinishTime = now
+            local raceTime = math.floor(now - raceStartTime)
+            raceStartTime = 0
+            
+            task.wait(1.2)
+            closeRewardModal()
+            task.wait(0.8)
+            clickGui(gui.Main_User_Interface.Teleport.Container.Races.Race8.Container.Teleport)
+            
+            print("[Race] ✅ Hoàn thành trong " .. raceTime .. " giây!")
         end
+        return
+    end
 
-        hrp.AssemblyLinearVelocity = direction * speed + Vector3.new(0, 22, 0)
-        for _, part in pairs(myCar:GetDescendants()) do
-            if part:IsA("BasePart") and part ~= hrp then
-                part.AssemblyLinearVelocity = direction * speed
-            end
-        end
+    if now - lastUpdate < 0.028 then return end
+    lastUpdate = now
 
-        local targetCFrame = CFrame.new(currentPos, targetPos)
-        hrp:PivotTo(targetCFrame:Lerp(hrp.CFrame, 0.87))
+    local hrp = MyCar.PrimaryPart
+    local nextCPNum = currentCP + 1
+    local cpName = (nextCPNum >= totalCP) and "Finish" or tostring(nextCPNum)
+    local checkpointPart = MyRace:FindFirstChild(cpName, true) or MyRace:FindFirstChild("Finish", true)
 
-        if dist < 20 and cpName == "Finish" then
-            hrp.AssemblyLinearVelocity = direction * 1750
-        end
+    if checkpointPart then
+        local lookahead = hrp.CFrame.LookVector * 22
+        local targetPos = checkpointPart.Position + Vector3.new(0, 5, 0) + lookahead
+        local dist = (targetPos - hrp.Position).Magnitude
+        local direction = (targetPos - hrp.Position).Unit
+        local speed = 1480
+        if dist < 45 then speed = 1820 end
+        if cpName == "Finish" or nextCPNum >= totalCP - 2 then speed = 2280 end
+        hrp.AssemblyLinearVelocity = direction * speed + Vector3.new(0, 35, 0)
+        hrp:PivotTo(hrp.CFrame:Lerp(CFrame.lookAt(hrp.Position, targetPos), 0.95))
     end
 end
 
--- ══════════════════════════════════════════════════════════════
--- PHẦN 6: VÒNG LẶP PHỤ + ANTI-THOÁT XE
--- ══════════════════════════════════════════════════════════════
-local function runSubLoops()
-    -- Vòng lặp 1: Tối ưu không va chạm & Auto Claim quà ẩn
-    task.spawn(function()
-        while task.wait(0.2) do
-            local gui = player.PlayerGui
-            if gui:FindFirstChild("LoadingScreen") then continue end
+-- ================== KHỞI CHẠY ==================
+print("[System] 🚀 Đang khởi chạy v3 - Black Screen + Tối ưu cực mạnh")
 
-            pcall(function()
-                if gui.Races.Container.Visible then
-                    if _G.myCar then
-                        for _, v in pairs(_G.myCar:GetDescendants()) do
-                            if v:IsA("BasePart") then v.CanCollide = false end
-                        end
-                    end
-                    if player.Character then
-                        for _, v in pairs(player.Character:GetDescendants()) do
-                            if v:IsA("BasePart") then v.CanCollide = false end
-                        end
-                    end
-                    for _, v in pairs(workspace:GetChildren()) do
-                        if (v.ClassName == "Model" and v:FindFirstChild("Container")) or v.Name == "PortCraneOversized" then
-                            v:Destroy()
-                        end
-                    end
-                end
-            end)
+enableBlackScreenAndLowGraphics()
+task.wait(2)
 
-            pcall(function()
-                for _, v in pairs(gui.Main_User_Interface.Rewards.PlaytimeRewards.Rewards:GetChildren()) do
-                    if v:FindFirstChild("Button") and not v.Button.Claimed.Visible then clickGui(v.Button) end
-                end
-            end)
-
-            pcall(function()
-                for _, v in pairs(gui.Challenges.Menu.Challenges:GetChildren()) do
-                    if v:FindFirstChild("Action") and v.Action.Label.Text == "Claim" then clickGui(v.Action) end
-                end
-            end)
-
-            pcall(function()
-                if gui.DailyRewards.Menu.Today.Claim.Label.Text ~= "Claimed" then clickGui(gui.DailyRewards.Menu.Today.Claim) end
-            end)
-
-            pcall(function()
-                if gui.RobuxShop.Menu.List.Boosts.Boost.Use.Visible == true then clickGui(gui.RobuxShop.Menu.List.Boosts.Boost.Use) end
-            end)
-
-            pcall(function() clickGui(gui.Challenges.Menu.Rewards.Claim) end)
-
-            pcall(function()
-                for _, v in pairs(codes) do
-                    gui.RobuxShop.Menu.List.Rewards.Codes.Input.Text = v
-                    task.wait()
-                    clickGui(gui.RobuxShop.Menu.List.Rewards.Codes.Redeem)
-                    task.wait()
-                end
-            end)
-        end
-    end)
-
-    -- Vòng lặp 2: KHÓA CHẶT GHẾ LÁI (Tần suất 0.05 giây để trị lỗi thoát lái)
-    task.spawn(function()
-        while task.wait(0.05) do
-            pcall(function()
-                local gui = player.PlayerGui
-                if gui.Races.Container.Visible and _G.myRace and player.Character then
-                    local hum = player.Character:FindFirstChildOfClass("Humanoid")
-                    
-                    if hum and not hum.Sit and _G.myCar and _G.myCar.Parent then
-                        local seat = _G.myCar:FindFirstChildWhichIsA("VehicleSeat", true) or _G.myCar:FindFirstChildWhichIsA("Seat", true)
-                        if seat and player.Character.PrimaryPart then
-                            player.Character:PivotTo(seat.CFrame)
-                            task.wait()
-                            seat:Sit(hum)
-                            hum.Sit = true
-                        end
-                    end
-                end
-            end)
-        end
-    end)
-end
-
--- ══════════════════════════════════════════════════════════════
--- KHỞI CHẠY (ĐÃ XÓA TẤT CẢ LOGIC GỬI HTTP REQUEST)
--- ══════════════════════════════════════════════════════════════
-fixLag()
-waitForGameLoad()
-print("[System] ✅ Đang tìm Cash...")
 local cashObj = getCashObject()
-if not cashObj then warn("[System] ❌ Không tìm thấy Cash!") return end
-print("[System] ✅ Đã tìm thấy Cash: " .. tostring(cashObj.Value))
+if not cashObj then
+    warn("[System] ❌ Không tìm thấy Cash!")
+    _G.AutoFarmV2_Running = false
+    return
+end
 
-loaded = true
-
-task.spawn(function()
-    while task.wait() do
-        local success, err = pcall(mainAutoFarm)
-        if not success then warn("AutoFarm Error: " .. tostring(err)) end
+cashObj:GetPropertyChangedSignal("Value"):Connect(function()
+    if _G.AutoFarmV2_Running then
+        pcall(sendData, cashObj.Value, _G.raceProgress)
+        print("[Cash] + " .. cashObj.Value .. " Cash")
     end
 end)
 
-runSubLoops()
+task.spawn(function()
+    while task.wait(0.03) do
+        if not _G.AutoFarmV2_Running then return end
+        pcall(mainAutoFarm)
+    end
+end)
 
-print("[System] 🚀 Script đã kích hoạt độc lập! Đã tắt hoàn toàn HTTP gửi dữ liệu & Chống văng xe hoạt động.")
+task.spawn(function()
+    while task.wait(1) do
+        if not _G.AutoFarmV2_Running then return end
+        local now = tick()
+        if now - lastClaimTime > 8 then lastClaimTime = now claimRewards() end
+        if now - lastCloseTime > 2.5 then lastCloseTime = now closeRewardModal() end
+        if now - lastAFKTime > 20 then
+            lastAFKTime = now
+            pcall(function()
+                VirtualUser:CaptureController()
+                VirtualUser:ClickButton2(Vector2.new(0, 0))
+            end)
+        end
+    end
+end)
+
+task.spawn(function()
+    while task.wait(HEARTBEAT_INTERVAL) do
+        if not _G.AutoFarmV2_Running then return end
+        pcall(sendData, cashObj.Value, _G.raceProgress)
+    end
+end)
+
+print("[System] ✅ Đã chạy thành công! Black Screen + Chỉ báo thời gian & tiền.")
