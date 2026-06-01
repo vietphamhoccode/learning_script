@@ -114,33 +114,22 @@ local function claimRewards()
         local main = gui:FindFirstChild("Main_User_Interface")
         if not main then return end
 
-        -- Playtime Rewards (tự động click tất cả Tier)
         pcall(function()
             for _, v in ipairs(main.Rewards.PlaytimeRewards.Rewards:GetChildren()) do
                 if v:FindFirstChild("Button") and not v.Button.Claimed.Visible then
-                    clickGui(v.Button)
-                    task.wait(0.15)
+                    clickGui(v.Button); task.wait(0.2)
                 end
             end
         end)
-
-        -- Daily Rewards
         pcall(function()
             local dr = gui:FindFirstChild("DailyRewards")
-            if dr and dr.Menu.Today.Claim.Label.Text ~= "Claimed" then
-                clickGui(dr.Menu.Today.Claim)
-            end
+            if dr and dr.Menu.Today.Claim.Label.Text ~= "Claimed" then clickGui(dr.Menu.Today.Claim) end
         end)
-
-        -- Challenges
         pcall(function()
             local ch = gui:FindFirstChild("Challenges")
             if ch then
                 for _, v in ipairs(ch.Menu.Challenges:GetChildren()) do
-                    if v:FindFirstChild("Action") and v.Action.Label.Text == "Claim" then
-                        clickGui(v.Action)
-                        task.wait(0.1)
-                    end
+                    if v:FindFirstChild("Action") and v.Action.Label.Text == "Claim" then clickGui(v.Action) end
                 end
                 pcall(function() clickGui(ch.Menu.Rewards.Claim) end)
             end
@@ -264,7 +253,7 @@ local function mainAutoFarm()
 end
 
 -- ================== KHỞI CHẠY ==================
-print("[System] 🚀 Full Script (Đã cập nhật theo log click của bạn) đang chạy...")
+print("[System] 🚀 Full Script + Anti-AFK Improved đang chạy...")
 enableBlackScreenAndLowGraphics()
 cleanVisuals()
 task.wait(2)
@@ -321,53 +310,33 @@ task.spawn(function()
     end
 end)
 
--- ================== BOOST + NHẬN THƯỞNG TỰ ĐỘNG (THEO LOG CỦA BẠN) ==================
+-- ================== ANTI-AFK MẠNH (Fix văng 20 phút) ==================
 task.spawn(function()
-    while task.wait(0.8) do
+    print("[Anti-AFK] 🚀 Phiên bản chống kick mạnh đã kích hoạt")
+    while task.wait(15) do  -- Kiểm tra mỗi 15 giây
         if not _G.AutoFarmV2_Running then return end
         pcall(function()
-            local gui = player.PlayerGui
-            if not gui then return end
-
-            local mainUI = gui:FindFirstChild("Main_User_Interface")
-            if not mainUI then return end
-
-            -- Mở Shop (dùng nút Store từ log)
-            local storeBtn = mainUI:FindFirstChild("UI_Frame") and mainUI.UI_Frame:FindFirstChild("Buttons") and mainUI.UI_Frame.Buttons:FindFirstChild("Store")
-            if storeBtn then
-                clickGui(storeBtn)
-                task.wait(0.5)
+            -- 1. Capture Controller
+            VirtualUser:CaptureController()
+            
+            -- 2. Click chuột ngẫu nhiên
+            VirtualUser:ClickButton2(Vector2.new(math.random(0, 100), math.random(0, 100)))
+            
+            -- 3. Di chuyển camera ngẫu nhiên
+            local camera = workspace.CurrentCamera
+            if camera then
+                camera.CFrame = camera.CFrame * CFrame.Angles(0, math.rad(math.random(-8,8)), 0)
             end
 
-            -- Chọn Rewards trong Shop (từ log)
-            if gui:FindFirstChild("RobuxShop") and gui.RobuxShop:FindFirstChild("Menu") and gui.RobuxShop.Menu:FindFirstChild("Categories") then
-                local rewardsCat = gui.RobuxShop.Menu.Categories:FindFirstChild("Rewards")
-                if rewardsCat then
-                    clickGui(rewardsCat)
-                    task.wait(0.4)
-                end
-            end
+            -- 4. Nhấn phím ảo (W, A, S, D, Space)
+            local keys = {Enum.KeyCode.W, Enum.KeyCode.A, Enum.KeyCode.S, Enum.KeyCode.D, Enum.KeyCode.Space}
+            VirtualUser:SendKeyEvent(true, keys[math.random(1,#keys)], false, game)
+            task.wait(0.1)
+            VirtualUser:SendKeyEvent(false, keys[math.random(1,#keys)], false, game)
 
-            -- Use Boost
-            if gui:FindFirstChild("RobuxShop") and gui.RobuxShop:FindFirstChild("Menu") and gui.RobuxShop.Menu:FindFirstChild("List") and gui.RobuxShop.Menu.List:FindFirstChild("Boosts") and gui.RobuxShop.Menu.List.Boosts:FindFirstChild("Boost") and gui.RobuxShop.Menu.List.Boosts.Boost:FindFirstChild("Use") then
-                local useBtn = gui.RobuxShop.Menu.List.Boosts.Boost.Use
-                if useBtn.Visible == true then
-                    clickGui(useBtn)
-                    print("[Boost] ✅ Đã dùng Boost!")
-                end
-            end
-
-            -- Redeem Code
-            if gui:FindFirstChild("RobuxShop") and gui.RobuxShop:FindFirstChild("Menu") and gui.RobuxShop.Menu:FindFirstChild("List") and gui.RobuxShop.Menu.List:FindFirstChild("Rewards") and gui.RobuxShop.Menu.List.Rewards:FindFirstChild("Codes") then
-                local redeem = gui.RobuxShop.Menu.List.Rewards.Codes:FindFirstChild("Redeem")
-                if redeem then
-                    gui.RobuxShop.Menu.List.Rewards.Codes.Input.Text = "ThanksFor810k"
-                    task.wait(0.2)
-                    clickGui(redeem)
-                end
-            end
+            print("[Anti-AFK] Đã thực hiện anti-kick")
         end)
     end
 end)
 
-print("[System] ✅ Script đã chạy thành công theo log click của bạn!")
+print("[System] ✅ Script chạy thành công! Anti-AFK đã được nâng cấp mạnh.")
