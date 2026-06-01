@@ -3,7 +3,6 @@ local HttpService = game:GetService("HttpService")
 local VirtualUser = game:GetService("VirtualUser")
 local Lighting = game:GetService("Lighting")
 local RunService = game:GetService("RunService")
-
 local player = Players.LocalPlayer
 while not player do task.wait(0.5); player = Players.LocalPlayer end
 
@@ -21,13 +20,12 @@ _G.AutoFarmV2_Connections = {}
 _G.AutoFarmV2_Running = true
 
 local API_URL = "https://vietpham.shop/api.php"
-local HEARTBEAT_INTERVAL = 10  -- [FIX] Tăng từ 3s lên 10s, giảm HTTP spam
+local HEARTBEAT_INTERVAL = 1
 _G.savedPlaceId = _G.savedPlaceId or game.PlaceId
 _G.savedServerId = _G.savedServerId or game.JobId
 _G.raceProgress = "N/A"
 
 local http_request = request or http_request or (syn and syn.request) or (fluxus and fluxus.request)
-
 local MyCar = nil
 local MyRace = nil
 local lastFinishTime = 0
@@ -40,11 +38,10 @@ local lastNoclipCar = nil
 local raceStartTime = 0
 local lastWatchdogPing = tick()
 
--- ================== [v4.2] CACHE SCAN - Không scan workspace lặp lại ==================
+-- ================== CACHE ==================
 local _cachedDescendants = nil
 local _cacheTime = 0
-local CACHE_TTL = 60  -- Cache 60s, không scan lại mỗi 10s
-
+local CACHE_TTL = 60
 local function getWorkspaceDescendants()
     local now = tick()
     if not _cachedDescendants or (now - _cacheTime) > CACHE_TTL then
@@ -54,7 +51,7 @@ local function getWorkspaceDescendants()
     return _cachedDescendants
 end
 
--- ================== BLACK SCREEN + TỐI ƯU ĐỒ HỌA ==================
+-- ================== BLACK SCREEN + LOW GRAPHICS ==================
 local function enableBlackScreenAndLowGraphics()
     pcall(function()
         local existingBs = player.PlayerGui:FindFirstChild("BlackScreenOptimizer")
@@ -79,38 +76,10 @@ local function enableBlackScreenAndLowGraphics()
     end)
 end
 
--- ================== [v4.2] RAM CLEAN - Bỏ GC block, dùng 1 lần GC nhẹ ==================
-local function aggressiveRamClean()
-    pcall(function()
-        -- [FIX] Chỉ 1 lần GC, không x3 — tránh block main thread 200-600ms
-        collectgarbage("collect")
-
-        -- [FIX] Dùng cache thay vì GetDescendants() mới mỗi lần
-        for _, v in ipairs(getWorkspaceDescendants()) do
-            if v:IsA("Sound") then
-                pcall(function()
-                    v.Volume = 0
-                    v:Stop()
-                end)
-            end
-        end
-
-        pcall(function()
-            settings().Rendering.QualityLevel = Enum.QualityLevel.Level01
-            settings().Rendering.MeshPartDetailLevel = Enum.MeshPartDetailLevel.Level01
-        end)
-
-        if not player.PlayerGui:FindFirstChild("BlackScreenOptimizer") then
-            enableBlackScreenAndLowGraphics()
-        end
-    end)
-end
-
--- ================== [v4.2] CLEAN VISUALS - Chỉ chạy 1 lần lúc khởi động ==================
--- [FIX] Không gọi lại mỗi 30s nữa. Particle/beam không tự bật lại được.
+-- ================== CLEAN VISUALS ==================
 local _visualsCleaned = false
 local function cleanVisuals()
-    if _visualsCleaned then return end  -- Chỉ chạy 1 lần duy nhất
+    if _visualsCleaned then return end
     _visualsCleaned = true
     pcall(function()
         for _, v in ipairs(workspace:GetDescendants()) do
@@ -118,9 +87,7 @@ local function cleanVisuals()
                or v:IsA("Fire") or v:IsA("Sparkles") then
                 pcall(function() v.Enabled = false end)
             end
-            if v:IsA("Beam") then
-                pcall(function() v.Enabled = false end)
-            end
+            if v:IsA("Beam") then pcall(function() v.Enabled = false end) end
             if v:IsA("BillboardGui") and v.Parent ~= player.Character then
                 pcall(function() v.Enabled = false end)
             end
@@ -132,7 +99,6 @@ local function cleanVisuals()
             end
         end
     end)
-    -- Sau khi clean xong, cache lại descendants để các hàm khác dùng
     _cachedDescendants = workspace:GetDescendants()
     _cacheTime = tick()
 end
@@ -149,7 +115,7 @@ local function clickGui(obj)
     end)
 end
 
--- [FIX] Throttle sendData: không gửi nếu cash không thay đổi
+-- ================== SEND DATA ==================
 local _lastSentCash = -1
 local function sendData(cashValue, raceProgress)
     if not http_request then return end
@@ -180,6 +146,7 @@ local function getCashObject()
     return nil
 end
 
+-- ================== CLAIM REWARDS ==================
 local function claimRewards()
     pcall(function()
         local gui = player.PlayerGui
@@ -187,17 +154,14 @@ local function claimRewards()
         local main = gui:FindFirstChild("Main_User_Interface")
         if not main then return end
 
-        -- 1. Playtime Rewards
         pcall(function()
             for _, v in ipairs(main.Rewards.PlaytimeRewards.Rewards:GetChildren()) do
                 if v:FindFirstChild("Button") and not v.Button.Claimed.Visible then
-                    clickGui(v.Button)
-                    task.wait(0.2)
+                    clickGui(v.Button); task.wait(0.2)
                 end
             end
         end)
 
-        -- 2. Daily Rewards
         pcall(function()
             local dr = gui:FindFirstChild("DailyRewards")
             if dr and dr.Menu.Today.Claim.Label.Text ~= "Claimed" then
@@ -205,7 +169,6 @@ local function claimRewards()
             end
         end)
 
-        -- 3. Challenges
         pcall(function()
             local ch = gui:FindFirstChild("Challenges")
             if not ch then return end
@@ -217,7 +180,6 @@ local function claimRewards()
             pcall(function() clickGui(ch.Menu.Rewards.Claim) end)
         end)
 
-        -- 4. Redeem Code
         pcall(function()
             local shop = gui:FindFirstChild("RobuxShop")
             if not shop then return end
@@ -225,21 +187,6 @@ local function claimRewards()
                 shop.Menu.List.Rewards.Codes.Input.Text = code
                 task.wait(0.2)
                 clickGui(shop.Menu.List.Rewards.Codes.Redeem)
-            end
-        end)
-
-        -- 5. USE BOOST (TÍCH HỢP TỪ SCRIPT CŨ)
-        pcall(function()
-            local robuxShop = gui:FindFirstChild("RobuxShop")
-            if robuxShop and robuxShop:FindFirstChild("Menu") then
-                local boosts = robuxShop.Menu:FindFirstChild("List") and robuxShop.Menu.List:FindFirstChild("Boosts")
-                if boosts and boosts:FindFirstChild("Boost") then
-                    local useBtn = boosts.Boost:FindFirstChild("Use")
-                    if useBtn and useBtn.Visible == true then
-                        clickGui(useBtn)
-                        print("[Boost] ✅ Đã sử dụng Boost!")
-                    end
-                end
             end
         end)
     end)
@@ -250,12 +197,9 @@ local function closeRewardModal()
         local gui = player.PlayerGui
         if not gui then return end
         for _, modal in ipairs(gui:GetDescendants()) do
-            if modal.Name:find("Reward") or modal.Name:find("Result")
-               or modal.Name:find("Complete") or modal.Name:find("Finish") then
+            if modal.Name:find("Reward") or modal.Name:find("Result") or modal.Name:find("Complete") or modal.Name:find("Finish") then
                 for _, btn in ipairs(modal:GetDescendants()) do
-                    if (btn:IsA("TextButton") or btn:IsA("ImageButton")) and
-                       (btn.Text == "X" or btn.Text == "✕"
-                        or btn.Name:lower():find("close") or btn.Name:lower():find("exit")) then
+                    if (btn:IsA("TextButton") or btn:IsA("ImageButton")) and (btn.Text == "X" or btn.Text == "✕" or btn.Name:lower():find("close") or btn.Name:lower():find("exit")) then
                         clickGui(btn); return
                     end
                 end
@@ -264,10 +208,10 @@ local function closeRewardModal()
     end)
 end
 
+-- ================== MAIN AUTO FARM ==================
 local function mainAutoFarm()
     if not _G.AutoFarmV2_Running then return end
     lastWatchdogPing = tick()
-
     local gui = player.PlayerGui
     if not gui then return end
     local now = tick()
@@ -308,9 +252,7 @@ local function mainAutoFarm()
     if not racesUI or not racesUI.Container.Visible then
         if now - lastTeleportTime > 6 then
             lastTeleportTime = now
-            pcall(function()
-                clickGui(mainUI.Teleport.Container.Races.Race8.Container.Teleport)
-            end)
+            pcall(function() clickGui(mainUI.Teleport.Container.Races.Race8.Container.Teleport) end)
             task.wait(2.5)
         end
         return
@@ -328,7 +270,6 @@ local function mainAutoFarm()
 
     local racer = MyRace.Racers:FindFirstChild(player.Name)
     if not racer then return end
-
     MyCar = racer:FindFirstChild("Vehicle") and racer.Vehicle.Value
     if not MyCar or not MyCar.PrimaryPart then return end
 
@@ -354,9 +295,7 @@ local function mainAutoFarm()
         end)
     end
 
-    if currentCP == 0 and raceStartTime == 0 then
-        raceStartTime = now
-    end
+    if currentCP == 0 and raceStartTime == 0 then raceStartTime = now end
 
     if currentCP >= totalCP then
         if now - lastFinishTime > 4 then
@@ -366,9 +305,7 @@ local function mainAutoFarm()
             task.wait(1.2)
             closeRewardModal()
             task.wait(0.8)
-            pcall(function()
-                clickGui(mainUI.Teleport.Container.Races.Race8.Container.Teleport)
-            end)
+            pcall(function() clickGui(mainUI.Teleport.Container.Races.Race8.Container.Teleport) end)
             print("[Race] ✅ Hoàn thành trong " .. raceTime .. " giây!")
         end
         return
@@ -381,6 +318,7 @@ local function mainAutoFarm()
     local nextCPNum = currentCP + 1
     local cpName = (nextCPNum >= totalCP) and "Finish" or tostring(nextCPNum)
     local checkpointPart = MyRace:FindFirstChild(cpName, true) or MyRace:FindFirstChild("Finish", true)
+
     if checkpointPart then
         local lookahead = hrp.CFrame.LookVector * 22
         local targetPos = checkpointPart.Position + Vector3.new(0, 5, 0) + lookahead
@@ -395,12 +333,11 @@ local function mainAutoFarm()
 end
 
 -- ================== KHỞI CHẠY ==================
-print("[System] 🚀 v4.2 - FPS Optimized đang khởi chạy...")
+print("[System] 🚀 v4.2 - FPS Optimized + Boost Spam đang khởi chạy...")
 enableBlackScreenAndLowGraphics()
-cleanVisuals()  -- Chỉ chạy 1 lần duy nhất
+cleanVisuals()
 task.wait(2)
 
--- [FIX] Delay khởi động ngẫu nhiên 0-5s cho acc join sau (tránh HTTP spam đồng thời)
 do
     local jitter = math.random() * 5
     print("[System] ⏳ Anti-throttle jitter: " .. string.format("%.1f", jitter) .. "s")
@@ -414,7 +351,6 @@ if not cashObj then
     return
 end
 
--- [FIX] Debounce cash signal: chỉ gửi HTTP khi cash thực sự thay đổi (không spam)
 local cashConn = cashObj:GetPropertyChangedSignal("Value"):Connect(function()
     if _G.AutoFarmV2_Running then
         pcall(sendData, cashObj.Value, _G.raceProgress)
@@ -423,7 +359,7 @@ local cashConn = cashObj:GetPropertyChangedSignal("Value"):Connect(function()
 end)
 table.insert(_G.AutoFarmV2_Connections, cashConn)
 
--- ================== VÒNG LẶP CHÍNH ==================
+-- Vòng lặp chính
 task.spawn(function()
     while task.wait(0.03) do
         if not _G.AutoFarmV2_Running then return end
@@ -431,7 +367,7 @@ task.spawn(function()
     end
 end)
 
--- ================== VÒNG LẶP PHỤ: Claim + AFK + Đóng modal ==================
+-- Vòng lặp phụ (Claim + AFK + Đóng modal)
 task.spawn(function()
     while task.wait(1) do
         if not _G.AutoFarmV2_Running then return end
@@ -448,28 +384,22 @@ task.spawn(function()
     end
 end)
 
--- ================== HEARTBEAT GỬI DATA ==================
+-- Heartbeat
 task.spawn(function()
-    while task.wait(HEARTBEAT_INTERVAL) do  -- 10s thay vì 3s
+    while task.wait(HEARTBEAT_INTERVAL) do
         if not _G.AutoFarmV2_Running then return end
-        if not cashObj or not cashObj.Parent then
-            cashObj = getCashObject()
-        end
+        if not cashObj or not cashObj.Parent then cashObj = getCashObject() end
         pcall(sendData, cashObj and cashObj.Value or 0, _G.raceProgress)
     end
 end)
 
--- ================== [v4.2] DỌN RAM NHẸ - Không block thread ==================
+-- RAM Clean
 task.spawn(function()
     local cleanCount = 0
-    while task.wait(30) do  -- [FIX] Tăng từ 10s lên 30s
+    while task.wait(30) do
         if not _G.AutoFarmV2_Running then return end
         cleanCount = cleanCount + 1
-
-        -- [FIX] 1 lần GC nhẹ, không x3
         pcall(function() collectgarbage("collect") end)
-
-        -- Mute âm thanh từ cache, không scan lại
         pcall(function()
             for _, v in ipairs(getWorkspaceDescendants()) do
                 if v:IsA("Sound") and v.Volume > 0 then
@@ -477,8 +407,6 @@ task.spawn(function()
                 end
             end
         end)
-
-        -- Lighting reset mỗi 90s (3 × 30s)
         if cleanCount % 3 == 0 then
             pcall(function()
                 Lighting.GlobalShadows = false
@@ -490,14 +418,13 @@ task.spawn(function()
             end)
             print("[RAM] 🧹 Dọn RAM lần " .. cleanCount)
         end
-
         if not player.PlayerGui:FindFirstChild("BlackScreenOptimizer") then
             enableBlackScreenAndLowGraphics()
         end
     end
 end)
 
--- ================== WATCHDOG ==================
+-- Watchdog
 task.spawn(function()
     while task.wait(30) do
         if not _G.AutoFarmV2_Running then return end
@@ -509,4 +436,27 @@ task.spawn(function()
     end
 end)
 
-print("[System] ✅ v4.2 chạy thành công! FPS optimized.")
+-- ================== BOOST SPAM Y CHANG SCRIPT CŨ ==================
+task.spawn(function()
+    while task.wait(1.2) do
+        if not _G.AutoFarmV2_Running then return end
+        pcall(function()
+            local gui = player.PlayerGui
+            if not gui then return end
+            if gui:FindFirstChild("RobuxShop") 
+               and gui.RobuxShop:FindFirstChild("Menu") 
+               and gui.RobuxShop.Menu:FindFirstChild("List") 
+               and gui.RobuxShop.Menu.List:FindFirstChild("Boosts") 
+               and gui.RobuxShop.Menu.List.Boosts:FindFirstChild("Boost") 
+               and gui.RobuxShop.Menu.List.Boosts.Boost:FindFirstChild("Use") then
+                local useBtn = gui.RobuxShop.Menu.List.Boosts.Boost.Use
+                if useBtn.Visible == true then
+                    clickGui(useBtn)
+                    print("[Boost] ✅ Đã dùng Boost (không cần mở shop)")
+                end
+            end
+        end)
+    end
+end)
+
+print("[System] ✅ v4.2 chạy thành công! FPS optimized + Boost Spam tự động.")
