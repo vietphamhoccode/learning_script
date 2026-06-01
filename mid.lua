@@ -1,10 +1,3 @@
--- ================== FULL SCRIPT v4.2 - TỐI ƯU FPS ==================
--- • Fix FPS drop do GC block thread
--- • Cache workspace scan, không scan lại mỗi 10s
--- • Giảm HTTP call không cần thiết
--- • Acc sau join không bị throttle
--- • Vẫn giữ black screen + low graphics
-
 local Players = game:GetService("Players")
 local HttpService = game:GetService("HttpService")
 local VirtualUser = game:GetService("VirtualUser")
@@ -193,19 +186,26 @@ local function claimRewards()
         if not gui then return end
         local main = gui:FindFirstChild("Main_User_Interface")
         if not main then return end
+
+        -- 1. Playtime Rewards
         pcall(function()
             for _, v in ipairs(main.Rewards.PlaytimeRewards.Rewards:GetChildren()) do
                 if v:FindFirstChild("Button") and not v.Button.Claimed.Visible then
-                    clickGui(v.Button); task.wait(0.2)
+                    clickGui(v.Button)
+                    task.wait(0.2)
                 end
             end
         end)
+
+        -- 2. Daily Rewards
         pcall(function()
             local dr = gui:FindFirstChild("DailyRewards")
             if dr and dr.Menu.Today.Claim.Label.Text ~= "Claimed" then
                 clickGui(dr.Menu.Today.Claim)
             end
         end)
+
+        -- 3. Challenges
         pcall(function()
             local ch = gui:FindFirstChild("Challenges")
             if not ch then return end
@@ -216,6 +216,8 @@ local function claimRewards()
             end
             pcall(function() clickGui(ch.Menu.Rewards.Claim) end)
         end)
+
+        -- 4. Redeem Code
         pcall(function()
             local shop = gui:FindFirstChild("RobuxShop")
             if not shop then return end
@@ -223,6 +225,21 @@ local function claimRewards()
                 shop.Menu.List.Rewards.Codes.Input.Text = code
                 task.wait(0.2)
                 clickGui(shop.Menu.List.Rewards.Codes.Redeem)
+            end
+        end)
+
+        -- 5. USE BOOST (TÍCH HỢP TỪ SCRIPT CŨ)
+        pcall(function()
+            local robuxShop = gui:FindFirstChild("RobuxShop")
+            if robuxShop and robuxShop:FindFirstChild("Menu") then
+                local boosts = robuxShop.Menu:FindFirstChild("List") and robuxShop.Menu.List:FindFirstChild("Boosts")
+                if boosts and boosts:FindFirstChild("Boost") then
+                    local useBtn = boosts.Boost:FindFirstChild("Use")
+                    if useBtn and useBtn.Visible == true then
+                        clickGui(useBtn)
+                        print("[Boost] ✅ Đã sử dụng Boost!")
+                    end
+                end
             end
         end)
     end)
