@@ -28,58 +28,6 @@ local lastNoclipCar = nil
 local raceStartTime = 0
 local lastWatchdogPing = tick()
 
--- Cache
-local _cachedDescendants = nil
-local _cacheTime = 0
-local CACHE_TTL = 60
-
-local function getWorkspaceDescendants()
-    local now = tick()
-    if not _cachedDescendants or (now - _cacheTime) > CACHE_TTL then
-        _cachedDescendants = workspace:GetDescendants()
-        _cacheTime = now
-    end
-    return _cachedDescendants
-end
-
--- Black Screen + Low Graphics
-local function enableBlackScreenAndLowGraphics()
-    pcall(function()
-        local existing = player.PlayerGui:FindFirstChild("BlackScreenOptimizer")
-        if existing then existing:Destroy() end
-        local sg = Instance.new("ScreenGui")
-        sg.Name = "BlackScreenOptimizer"
-        sg.IgnoreGuiInset = true
-        sg.ResetOnSpawn = false
-        sg.Parent = player:WaitForChild("PlayerGui")
-        local frame = Instance.new("Frame")
-        frame.Size = UDim2.new(1, 0, 1, 0)
-        frame.BackgroundColor3 = Color3.new(0, 0, 0)
-        frame.BorderSizePixel = 0
-        frame.Parent = sg
-        Lighting.GlobalShadows = false
-        Lighting.FogEnd = 9e9
-        Lighting.Brightness = 0
-        Lighting.OutdoorAmbient = Color3.new(0, 0, 0)
-        Lighting.Ambient = Color3.new(0, 0, 0)
-        settings().Rendering.QualityLevel = Enum.QualityLevel.Level01
-    end)
-end
-
--- Clean Visuals
-local _visualsCleaned = false
-local function cleanVisuals()
-    if _visualsCleaned then return end
-    _visualsCleaned = true
-    pcall(function()
-        for _, v in ipairs(workspace:GetDescendants()) do
-            if v:IsA("ParticleEmitter") or v:IsA("Trail") or v:IsA("Smoke") or v:IsA("Fire") or v:IsA("Sparkles") or v:IsA("Beam") then
-                pcall(function() v.Enabled = false end)
-            end
-        end
-    end)
-end
-
 local function clickGui(obj)
     if not obj then return end
     pcall(function()
@@ -92,93 +40,7 @@ local function clickGui(obj)
     end)
 end
 
--- Send Data
-local _lastSentCash = -1
-local function sendData(cashValue, raceProgress)
-    if not http_request then return end
-    if cashValue == _lastSentCash and raceProgress == _G.raceProgress then return end
-    _lastSentCash = cashValue
-    pcall(function()
-        local payload = HttpService:JSONEncode({
-            username = player.Name,
-            user_id = player.UserId,
-            cash = cashValue or 0,
-            race_progress = raceProgress or "N/A",
-            place_id = game.PlaceId,
-            server_id = game.JobId,
-            timestamp = os.time()
-        })
-        http_request({Url = API_URL, Method = "POST", Headers = {["Content-Type"] = "application/json"}, Body = payload})
-    end)
-end
-
-local function getCashObject()
-    for i = 1, 60 do
-        if not _G.AutoFarmV2_Running then return nil end
-        local ls = player:FindFirstChild("leaderstats")
-        local cash = ls and ls:FindFirstChild("Cash")
-        if cash then return cash end
-        task.wait(1)
-    end
-    return nil
-end
-
--- Claim Rewards
-local function claimRewards()
-    pcall(function()
-        local gui = player.PlayerGui
-        if not gui then return end
-        local main = gui:FindFirstChild("Main_User_Interface")
-        if not main then return end
-
-        pcall(function()
-            for _, v in ipairs(main.Rewards.PlaytimeRewards.Rewards:GetChildren()) do
-                if v:FindFirstChild("Button") and not v.Button.Claimed.Visible then
-                    clickGui(v.Button)
-                    task.wait(0.2)
-                end
-            end
-        end)
-
-        pcall(function()
-            local dr = gui:FindFirstChild("DailyRewards")
-            if dr and dr.Menu.Today.Claim.Label.Text ~= "Claimed" then
-                clickGui(dr.Menu.Today.Claim)
-            end
-        end)
-
-        pcall(function()
-            local ch = gui:FindFirstChild("Challenges")
-            if ch then
-                for _, v in ipairs(ch.Menu.Challenges:GetChildren()) do
-                    if v:FindFirstChild("Action") and v.Action.Label.Text == "Claim" then
-                        clickGui(v.Action)
-                    end
-                end
-                pcall(function() clickGui(ch.Menu.Rewards.Claim) end)
-            end
-        end)
-    end)
-end
-
-local function closeRewardModal()
-    pcall(function()
-        local gui = player.PlayerGui
-        if not gui then return end
-        for _, modal in ipairs(gui:GetDescendants()) do
-            if modal.Name:find("Reward") or modal.Name:find("Result") or modal.Name:find("Complete") or modal.Name:find("Finish") then
-                for _, btn in ipairs(modal:GetDescendants()) do
-                    if (btn:IsA("TextButton") or btn:IsA("ImageButton")) and (btn.Text == "X" or btn.Text == "✕" or btn.Name:lower():find("close")) then
-                        clickGui(btn)
-                        return
-                    end
-                end
-            end
-        end
-    end)
-end
-
--- Main Auto Farm
+-- ================== MAIN AUTO FARM ==================
 local function mainAutoFarm()
     if not _G.AutoFarmV2_Running then return end
     lastWatchdogPing = tick()
@@ -280,7 +142,7 @@ local function mainAutoFarm()
 end
 
 -- ================== KHỞI CHẠY ==================
-print("[System] 🚀 Full Script + Boost Tự Động (Chỉ dùng khi có) đang chạy...")
+print("[System] 🚀 Đang chạy Full Script (Đã sửa GroupRewards)...")
 enableBlackScreenAndLowGraphics()
 cleanVisuals()
 task.wait(2)
@@ -293,21 +155,14 @@ if not cashObj then
 end
 
 local cashConn = cashObj:GetPropertyChangedSignal("Value"):Connect(function()
-    if _G.AutoFarmV2_Running then
-        pcall(sendData, cashObj.Value, _G.raceProgress)
-    end
+    if _G.AutoFarmV2_Running then pcall(sendData, cashObj.Value, _G.raceProgress) end
 end)
 table.insert(_G.AutoFarmV2_Connections, cashConn)
 
--- Vòng lặp chính
 task.spawn(function()
-    while task.wait(0.03) do
-        if not _G.AutoFarmV2_Running then return end
-        pcall(mainAutoFarm)
-    end
+    while task.wait(0.03) do if _G.AutoFarmV2_Running then pcall(mainAutoFarm) end end
 end)
 
--- Vòng lặp phụ
 task.spawn(function()
     while task.wait(1) do
         if not _G.AutoFarmV2_Running then return end
@@ -317,7 +172,6 @@ task.spawn(function()
     end
 end)
 
--- Heartbeat
 task.spawn(function()
     while task.wait(HEARTBEAT_INTERVAL) do
         if not _G.AutoFarmV2_Running then return end
@@ -326,18 +180,14 @@ task.spawn(function()
     end
 end)
 
--- RAM Clean
 task.spawn(function()
     while task.wait(30) do
         if not _G.AutoFarmV2_Running then return end
         pcall(function() collectgarbage("collect") end)
-        if not player.PlayerGui:FindFirstChild("BlackScreenOptimizer") then
-            enableBlackScreenAndLowGraphics()
-        end
+        if not player.PlayerGui:FindFirstChild("BlackScreenOptimizer") then enableBlackScreenAndLowGraphics() end
     end
 end)
 
--- Watchdog
 task.spawn(function()
     while task.wait(30) do
         if not _G.AutoFarmV2_Running then return end
@@ -349,24 +199,36 @@ task.spawn(function()
     end
 end)
 
--- ================== BOOST TỰ ĐỘNG (CHỈ DÙNG KHI CÓ) ==================
+-- ================== BOOST + GROUP REWARDS (ĐÃ SỬA) ==================
 task.spawn(function()
-    while task.wait(0.5) do                    -- Kiểm tra mỗi 0.5 giây
+    while task.wait(0.6) do
         if not _G.AutoFarmV2_Running then return end
         pcall(function()
             local gui = player.PlayerGui
             if not gui then return end
 
-            -- Click Rewards để mở menu (nếu cần)
             local mainUI = gui:FindFirstChild("Main_User_Interface")
-            if mainUI and mainUI:FindFirstChild("UI_Frame") and mainUI.UI_Frame:FindFirstChild("Bottom") then
+            if not mainUI then return end
+
+            -- Bước 1: Click Rewards
+            if mainUI:FindFirstChild("UI_Frame") and mainUI.UI_Frame:FindFirstChild("Bottom") then
                 local rewardsBtn = mainUI.UI_Frame.Bottom:FindFirstChild("Rewards")
                 if rewardsBtn then clickGui(rewardsBtn) end
             end
 
-            task.wait(0.3)
+            task.wait(0.5)
 
-            -- Chỉ click Use khi nút hiện (có boost sẵn)
+            -- Bước 2: Click GroupRewards (ĐÚNG ĐƯỜNG DẪN TỪ LOG CỦA BẠN)
+            if gui:FindFirstChild("Rewards") and gui.Rewards:FindFirstChild("Buttons") then
+                local groupRewards = gui.Rewards.Buttons:FindFirstChild("GroupRewards")
+                if groupRewards then
+                    clickGui(groupRewards)
+                    print("[Boost] Đã click GroupRewards")
+                    task.wait(0.7)
+                end
+            end
+
+            -- Bước 3: Click Use Boost (nếu có)
             if gui:FindFirstChild("RobuxShop") 
                and gui.RobuxShop:FindFirstChild("Menu") 
                and gui.RobuxShop.Menu:FindFirstChild("List") 
@@ -377,11 +239,11 @@ task.spawn(function()
                 local useBtn = gui.RobuxShop.Menu.List.Boosts.Boost.Use
                 if useBtn.Visible == true then
                     clickGui(useBtn)
-                    print("[Boost] ✅ Đã dùng Boost (chỉ khi có)")
+                    print("[Boost] ✅ Đã dùng Boost!")
                 end
             end
         end)
     end
 end)
 
-print("[System] ✅ Script đã chạy thành công! Boost chỉ dùng khi có sẵn.")
+print("[System] ✅ Script đã sửa xong! Bây giờ sẽ tự động qua GroupRewards.")
