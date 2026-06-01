@@ -1,9 +1,9 @@
--- ================== FULL SCRIPT v4 - TỐI ƯU RAM + FIX TREO DÀI HẠN ==================
--- • Black Screen giảm RAM & đồ họa mạnh
--- • Tối ưu settings cực thấp
--- • Chỉ hiện: Thời gian hoàn thành đua + Tiền vừa nhận
--- • Không reset nhân vật | Không jump | Anti-AFK 20s
--- • v4: Fix treo lâu, dọn RAM định kỳ, watchdog, fix memory leak
+-- ================== FULL SCRIPT v4.2 - TỐI ƯU FPS ==================
+-- • Fix FPS drop do GC block thread
+-- • Cache workspace scan, không scan lại mỗi 10s
+-- • Giảm HTTP call không cần thiết
+-- • Acc sau join không bị throttle
+-- • Vẫn giữ black screen + low graphics
 
 local Players = game:GetService("Players")
 local HttpService = game:GetService("HttpService")
@@ -19,19 +19,16 @@ if _G.AutoFarmV2_Running then
     _G.AutoFarmV2_Running = false
     task.wait(2)
 end
-
--- Ngắt connection cũ nếu có
 if _G.AutoFarmV2_Connections then
     for _, c in ipairs(_G.AutoFarmV2_Connections) do
         pcall(function() c:Disconnect() end)
     end
 end
 _G.AutoFarmV2_Connections = {}
-
 _G.AutoFarmV2_Running = true
 
 local API_URL = "https://vietpham.shop/api.php"
-local HEARTBEAT_INTERVAL = 3
+local HEARTBEAT_INTERVAL = 10  -- [FIX] Tăng từ 3s lên 10s, giảm HTTP spam
 _G.savedPlaceId = _G.savedPlaceId or game.PlaceId
 _G.savedServerId = _G.savedServerId or game.JobId
 _G.raceProgress = "N/A"
@@ -48,36 +45,103 @@ local lastCloseTime = 0
 local lastAFKTime = 0
 local lastNoclipCar = nil
 local raceStartTime = 0
-local lastWatchdogPing = tick()  -- [v4] Watchdog
+local lastWatchdogPing = tick()
 
--- ================== BLACK SCREEN + TỐI ƯU ĐỒ HỌA CỰC MẠNH ==================
+-- ================== [v4.2] CACHE SCAN - Không scan workspace lặp lại ==================
+local _cachedDescendants = nil
+local _cacheTime = 0
+local CACHE_TTL = 60  -- Cache 60s, không scan lại mỗi 10s
+
+local function getWorkspaceDescendants()
+    local now = tick()
+    if not _cachedDescendants or (now - _cacheTime) > CACHE_TTL then
+        _cachedDescendants = workspace:GetDescendants()
+        _cacheTime = now
+    end
+    return _cachedDescendants
+end
+
+-- ================== BLACK SCREEN + TỐI ƯU ĐỒ HỌA ==================
 local function enableBlackScreenAndLowGraphics()
     pcall(function()
-        -- Xóa black screen cũ nếu có (tránh duplicate)
         local existingBs = player.PlayerGui:FindFirstChild("BlackScreenOptimizer")
         if existingBs then existingBs:Destroy() end
-
         local sg = Instance.new("ScreenGui")
         sg.Name = "BlackScreenOptimizer"
         sg.IgnoreGuiInset = true
-        sg.ResetOnSpawn = false  -- [v4] Giữ black screen khi respawn
+        sg.ResetOnSpawn = false
         sg.Parent = player:WaitForChild("PlayerGui")
-
         local frame = Instance.new("Frame")
         frame.Size = UDim2.new(1, 0, 1, 0)
         frame.BackgroundColor3 = Color3.new(0, 0, 0)
         frame.BorderSizePixel = 0
         frame.Parent = sg
-
         Lighting.GlobalShadows = false
         Lighting.FogEnd = 9e9
         Lighting.Brightness = 0
-        Lighting.OutdoorAmbient = Color3.new(0,0,0)
-        Lighting.Ambient = Color3.new(0,0,0)
-
+        Lighting.OutdoorAmbient = Color3.new(0, 0, 0)
+        Lighting.Ambient = Color3.new(0, 0, 0)
         settings().Rendering.QualityLevel = Enum.QualityLevel.Level01
         settings().Rendering.MeshPartDetailLevel = Enum.MeshPartDetailLevel.Level01
     end)
+end
+
+-- ================== [v4.2] RAM CLEAN - Bỏ GC block, dùng 1 lần GC nhẹ ==================
+local function aggressiveRamClean()
+    pcall(function()
+        -- [FIX] Chỉ 1 lần GC, không x3 — tránh block main thread 200-600ms
+        collectgarbage("collect")
+
+        -- [FIX] Dùng cache thay vì GetDescendants() mới mỗi lần
+        for _, v in ipairs(getWorkspaceDescendants()) do
+            if v:IsA("Sound") then
+                pcall(function()
+                    v.Volume = 0
+                    v:Stop()
+                end)
+            end
+        end
+
+        pcall(function()
+            settings().Rendering.QualityLevel = Enum.QualityLevel.Level01
+            settings().Rendering.MeshPartDetailLevel = Enum.MeshPartDetailLevel.Level01
+        end)
+
+        if not player.PlayerGui:FindFirstChild("BlackScreenOptimizer") then
+            enableBlackScreenAndLowGraphics()
+        end
+    end)
+end
+
+-- ================== [v4.2] CLEAN VISUALS - Chỉ chạy 1 lần lúc khởi động ==================
+-- [FIX] Không gọi lại mỗi 30s nữa. Particle/beam không tự bật lại được.
+local _visualsCleaned = false
+local function cleanVisuals()
+    if _visualsCleaned then return end  -- Chỉ chạy 1 lần duy nhất
+    _visualsCleaned = true
+    pcall(function()
+        for _, v in ipairs(workspace:GetDescendants()) do
+            if v:IsA("ParticleEmitter") or v:IsA("Trail") or v:IsA("Smoke")
+               or v:IsA("Fire") or v:IsA("Sparkles") then
+                pcall(function() v.Enabled = false end)
+            end
+            if v:IsA("Beam") then
+                pcall(function() v.Enabled = false end)
+            end
+            if v:IsA("BillboardGui") and v.Parent ~= player.Character then
+                pcall(function() v.Enabled = false end)
+            end
+        end
+        for _, v in ipairs(Lighting:GetChildren()) do
+            if v:IsA("BloomEffect") or v:IsA("BlurEffect") or v:IsA("ColorCorrectionEffect")
+               or v:IsA("SunRaysEffect") or v:IsA("DepthOfFieldEffect") then
+                pcall(function() v.Enabled = false end)
+            end
+        end
+    end)
+    -- Sau khi clean xong, cache lại descendants để các hàm khác dùng
+    _cachedDescendants = workspace:GetDescendants()
+    _cacheTime = tick()
 end
 
 local function clickGui(obj)
@@ -92,8 +156,12 @@ local function clickGui(obj)
     end)
 end
 
+-- [FIX] Throttle sendData: không gửi nếu cash không thay đổi
+local _lastSentCash = -1
 local function sendData(cashValue, raceProgress)
     if not http_request then return end
+    if cashValue == _lastSentCash and raceProgress == _G.raceProgress then return end
+    _lastSentCash = cashValue
     pcall(function()
         local payload = HttpService:JSONEncode({
             username = player.Name,
@@ -108,7 +176,6 @@ local function sendData(cashValue, raceProgress)
     end)
 end
 
--- [v4] Tìm Cash với retry, không crash nếu mất
 local function getCashObject()
     for i = 1, 60 do
         if not _G.AutoFarmV2_Running then return nil end
@@ -126,8 +193,6 @@ local function claimRewards()
         if not gui then return end
         local main = gui:FindFirstChild("Main_User_Interface")
         if not main then return end
-
-        -- Playtime rewards
         pcall(function()
             for _, v in ipairs(main.Rewards.PlaytimeRewards.Rewards:GetChildren()) do
                 if v:FindFirstChild("Button") and not v.Button.Claimed.Visible then
@@ -135,16 +200,12 @@ local function claimRewards()
                 end
             end
         end)
-
-        -- Daily rewards
         pcall(function()
             local dr = gui:FindFirstChild("DailyRewards")
             if dr and dr.Menu.Today.Claim.Label.Text ~= "Claimed" then
                 clickGui(dr.Menu.Today.Claim)
             end
         end)
-
-        -- Challenges
         pcall(function()
             local ch = gui:FindFirstChild("Challenges")
             if not ch then return end
@@ -155,8 +216,6 @@ local function claimRewards()
             end
             pcall(function() clickGui(ch.Menu.Rewards.Claim) end)
         end)
-
-        -- Codes
         pcall(function()
             local shop = gui:FindFirstChild("RobuxShop")
             if not shop then return end
@@ -174,10 +233,12 @@ local function closeRewardModal()
         local gui = player.PlayerGui
         if not gui then return end
         for _, modal in ipairs(gui:GetDescendants()) do
-            if modal.Name:find("Reward") or modal.Name:find("Result") or modal.Name:find("Complete") or modal.Name:find("Finish") then
+            if modal.Name:find("Reward") or modal.Name:find("Result")
+               or modal.Name:find("Complete") or modal.Name:find("Finish") then
                 for _, btn in ipairs(modal:GetDescendants()) do
                     if (btn:IsA("TextButton") or btn:IsA("ImageButton")) and
-                       (btn.Text == "X" or btn.Text == "✕" or btn.Name:lower():find("close") or btn.Name:lower():find("exit")) then
+                       (btn.Text == "X" or btn.Text == "✕"
+                        or btn.Name:lower():find("close") or btn.Name:lower():find("exit")) then
                         clickGui(btn); return
                     end
                 end
@@ -188,20 +249,18 @@ end
 
 local function mainAutoFarm()
     if not _G.AutoFarmV2_Running then return end
-    lastWatchdogPing = tick()  -- [v4] Báo watchdog còn sống
+    lastWatchdogPing = tick()
 
     local gui = player.PlayerGui
     if not gui then return end
     local now = tick()
 
-    -- Loading screen
     local loadScreen = gui:FindFirstChild("LoadingScreen")
     if loadScreen then
         clickGui(loadScreen.Center and loadScreen.Center.Frame and loadScreen.Center.Frame.Play and loadScreen.Center.Frame.Play.Button)
         task.wait(1); return
     end
 
-    -- Starter pick
     local starterPick = gui:FindFirstChild("StarterPick")
     if starterPick and starterPick.Enabled then
         pcall(function()
@@ -215,7 +274,6 @@ local function mainAutoFarm()
     local mainUI = gui:FindFirstChild("Main_User_Interface")
     if not mainUI then return end
 
-    -- Spawn xe
     if not gui:FindFirstChild("A-Chassis Interface") then
         pcall(function()
             clickGui(mainUI.UI_Frame.Buttons.Spawn)
@@ -229,7 +287,6 @@ local function mainAutoFarm()
         return
     end
 
-    -- Teleport đến đua nếu chưa vào race
     local racesUI = gui:FindFirstChild("Races")
     if not racesUI or not racesUI.Container.Visible then
         if now - lastTeleportTime > 6 then
@@ -242,7 +299,6 @@ local function mainAutoFarm()
         return
     end
 
-    -- Tìm race của player
     MyRace = nil
     local racesFolder = workspace:FindFirstChild("Races")
     if not racesFolder then return end
@@ -263,7 +319,6 @@ local function mainAutoFarm()
     local totalCP = (MyRace:FindFirstChild("Checkpoints") and MyRace.Checkpoints.Value) or 12
     _G.raceProgress = currentCP .. "/" .. totalCP
 
-    -- Noclip xe (chỉ khi đổi xe)
     if MyCar ~= lastNoclipCar then
         lastNoclipCar = MyCar
         for _, v in ipairs(MyCar:GetDescendants()) do
@@ -271,7 +326,6 @@ local function mainAutoFarm()
         end
     end
 
-    -- Ngồi vào xe
     local hum = player.Character and player.Character:FindFirstChildOfClass("Humanoid")
     if hum and not hum.Sit then
         pcall(function()
@@ -287,7 +341,6 @@ local function mainAutoFarm()
         raceStartTime = now
     end
 
-    -- Hoàn thành đua
     if currentCP >= totalCP then
         if now - lastFinishTime > 4 then
             lastFinishTime = now
@@ -304,11 +357,9 @@ local function mainAutoFarm()
         return
     end
 
-    -- Throttle loop chính
     if now - lastUpdate < 0.028 then return end
     lastUpdate = now
 
-    -- Di chuyển xe đến checkpoint
     local hrp = MyCar.PrimaryPart
     local nextCPNum = currentCP + 1
     local cpName = (nextCPNum >= totalCP) and "Finish" or tostring(nextCPNum)
@@ -327,9 +378,17 @@ local function mainAutoFarm()
 end
 
 -- ================== KHỞI CHẠY ==================
-print("[System] 🚀 Đang khởi chạy v4 - RAM Optimized + Fix Treo")
+print("[System] 🚀 v4.2 - FPS Optimized đang khởi chạy...")
 enableBlackScreenAndLowGraphics()
+cleanVisuals()  -- Chỉ chạy 1 lần duy nhất
 task.wait(2)
+
+-- [FIX] Delay khởi động ngẫu nhiên 0-5s cho acc join sau (tránh HTTP spam đồng thời)
+do
+    local jitter = math.random() * 5
+    print("[System] ⏳ Anti-throttle jitter: " .. string.format("%.1f", jitter) .. "s")
+    task.wait(jitter)
+end
 
 local cashObj = getCashObject()
 if not cashObj then
@@ -338,7 +397,7 @@ if not cashObj then
     return
 end
 
--- Kết nối Cash change (lưu lại để có thể ngắt)
+-- [FIX] Debounce cash signal: chỉ gửi HTTP khi cash thực sự thay đổi (không spam)
 local cashConn = cashObj:GetPropertyChangedSignal("Value"):Connect(function()
     if _G.AutoFarmV2_Running then
         pcall(sendData, cashObj.Value, _G.raceProgress)
@@ -374,9 +433,8 @@ end)
 
 -- ================== HEARTBEAT GỬI DATA ==================
 task.spawn(function()
-    while task.wait(HEARTBEAT_INTERVAL) do
+    while task.wait(HEARTBEAT_INTERVAL) do  -- 10s thay vì 3s
         if not _G.AutoFarmV2_Running then return end
-        -- [v4] Tìm lại cashObj nếu bị mất (ví dụ teleport server)
         if not cashObj or not cashObj.Parent then
             cashObj = getCashObject()
         end
@@ -384,39 +442,54 @@ task.spawn(function()
     end
 end)
 
--- ================== [v4] WATCHDOG - PHÁT HIỆN TREO ==================
+-- ================== [v4.2] DỌN RAM NHẸ - Không block thread ==================
+task.spawn(function()
+    local cleanCount = 0
+    while task.wait(30) do  -- [FIX] Tăng từ 10s lên 30s
+        if not _G.AutoFarmV2_Running then return end
+        cleanCount = cleanCount + 1
+
+        -- [FIX] 1 lần GC nhẹ, không x3
+        pcall(function() collectgarbage("collect") end)
+
+        -- Mute âm thanh từ cache, không scan lại
+        pcall(function()
+            for _, v in ipairs(getWorkspaceDescendants()) do
+                if v:IsA("Sound") and v.Volume > 0 then
+                    pcall(function() v.Volume = 0; v:Stop() end)
+                end
+            end
+        end)
+
+        -- Lighting reset mỗi 90s (3 × 30s)
+        if cleanCount % 3 == 0 then
+            pcall(function()
+                Lighting.GlobalShadows = false
+                Lighting.FogEnd = 9e9
+                Lighting.Brightness = 0
+                Lighting.OutdoorAmbient = Color3.new(0, 0, 0)
+                Lighting.Ambient = Color3.new(0, 0, 0)
+                settings().Rendering.QualityLevel = Enum.QualityLevel.Level01
+            end)
+            print("[RAM] 🧹 Dọn RAM lần " .. cleanCount)
+        end
+
+        if not player.PlayerGui:FindFirstChild("BlackScreenOptimizer") then
+            enableBlackScreenAndLowGraphics()
+        end
+    end
+end)
+
+-- ================== WATCHDOG ==================
 task.spawn(function()
     while task.wait(30) do
         if not _G.AutoFarmV2_Running then return end
         if tick() - lastWatchdogPing > 45 then
-            warn("[Watchdog] ⚠️ Vòng lặp chính bị treo! Đang khởi động lại...")
+            warn("[Watchdog] ⚠️ Vòng lặp chính bị treo! Hãy paste lại script!")
             _G.AutoFarmV2_Running = false
-            task.wait(2)
-            -- Tự restart script (nếu executor hỗ trợ)
-            if loadstring then
-                -- Người dùng cần paste lại script nếu executor không có auto-restart
-                warn("[Watchdog] ⚠️ Hãy paste lại script để tiếp tục!")
-            end
             return
         end
     end
 end)
 
--- ================== [v4] DỌN RAM ĐỊNH KỲ ==================
-task.spawn(function()
-    while task.wait(60) do
-        if not _G.AutoFarmV2_Running then return end
-        collectgarbage("collect")
-        -- Đảm bảo black screen vẫn còn (đôi khi bị xóa khi reset)
-        if not player.PlayerGui:FindFirstChild("BlackScreenOptimizer") then
-            enableBlackScreenAndLowGraphics()
-        end
-        -- Đảm bảo đồ họa vẫn ở mức thấp nhất
-        pcall(function()
-            settings().Rendering.QualityLevel = Enum.QualityLevel.Level01
-            settings().Rendering.MeshPartDetailLevel = Enum.MeshPartDetailLevel.Level01
-        end)
-    end
-end)
-
-print("[System] ✅ v4 chạy thành công! Watchdog + RAM cleanup đã bật.")
+print("[System] ✅ v4.2 chạy thành công! FPS optimized.")
