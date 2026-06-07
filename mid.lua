@@ -15,6 +15,7 @@ local API_URL = "https://keywave.site/api.php"
 local HEARTBEAT_INTERVAL = 1
 _G.raceProgress = "N/A"
 _G.wasRace = nil 
+_G.isSpawningCar = false -- Biến khóa chống spam khi đang gọi xe
 
 local http_request = request or http_request or (syn and syn.request) or (fluxus and fluxus.request)
 local MyCar = nil
@@ -26,7 +27,7 @@ local lastClaimTime = 0
 local lastCloseTime = 0
 local lastNoclipCar = nil
 local lastWatchdogPing = tick()
-local lastBoostTime = 0 -- Biến lưu mốc thời gian sử dụng Boost
+local lastBoostTime = 0 
 
 -- ================== HÀM HỖ TRỢ ==================
 local function clickGui(obj)
@@ -117,22 +118,22 @@ local function closeRewardModal()
     end)
 end
 
--- Hàm kiểm tra thực tế xem người chơi đã lên xe chưa để chặn lỗi spam gọi xe
-local function isAlreadyInCar()
-    local char = player.Character
-    if char then
-        local humanoid = char:FindFirstChildOfClass("Humanoid")
-        if humanoid and humanoid.SeatPart and humanoid.SeatPart:IsA("VehicleSeat") then
-            return true
-        end
-    end
-    for _, race in ipairs(workspace:GetDescendants()) do
-        if race.Name == "Racers" and race:FindFirstChild(player.Name) then
-            local racerObj = race[player.Name]
-            if racerObj:FindFirstChild("Vehicle") and racerObj.Vehicle.Value then
-                return true
+-- FIX TRIỆT ĐỂ: Hàm kiểm tra xe nâng cao bằng cách quét toàn bộ folder Races trong Workspace
+local function hasActiveCar()
+    local races = workspace:FindFirstChild("Races")
+    if races then
+        for _, race in ipairs(races:GetDescendants()) do
+            if race.Name == "Racers" and race:FindFirstChild(player.Name) then
+                local racerObj = race[player.Name]
+                if racerObj:FindFirstChild("Vehicle") and racerObj.Vehicle.Value then
+                    return true
+                end
             end
         end
+    end
+    -- Kiểm tra thêm nếu xe spawn tự do ngoài map (nếu game có cơ chế này)
+    if workspace:FindFirstChild(player.Name .. "'s Car") or workspace:FindFirstChild(player.Name .. "Vehicle") then
+        return true
     end
     return false
 end
@@ -162,36 +163,50 @@ local function mainAutoFarm()
     local mainUI = gui:FindFirstChild("Main_User_Interface")
     if not mainUI then return end
 
-    -- Chỉ gọi xe nếu thực tế chưa sở hữu xe và chưa có giao diện lái xe
-    if not gui:FindFirstChild("A-Chassis Interface") and not isAlreadyInCar() then
-        clickGui(mainUI.UI_Frame.Buttons.Spawn)
-        task.wait(1.5)
-        for _, v in ipairs(mainUI.Garage.Container.Vehicles:GetChildren()) do
-            if v:IsA("ImageButton") and v.Name ~= "Teleport" then
-                clickGui(v)
-                task.wait(2)
-                break
-            end
-        end
-        return
-    end
+    -- FIX: Nếu đang trong quá trình gọi xe, tạm dừng vòng lặp chính để tránh spam nút
+    if _G.isSpawningCar then return end
 
-    -- KIỂM TRA PHÒNG ĐUA
-    if not gui:FindFirstChild("Races") or not gui.Races.Container.Visible then
-        if _G.wasRace and not isAlreadyInCar() then
-            _G.wasRace = nil
+    -- KIỂM TRA GỌI XE LẦN ĐẦU KHI VÀO GAME
+    if not gui:FindFirstChild("A-Chassis Interface") and not pcall(hasActiveCar) then
+        _G.isSpawningCar = true
+        task.spawn(function()
+            print("[System] 🚘 Đang tiến hành triệu hồi xe...")
             clickGui(mainUI.UI_Frame.Buttons.Spawn)
-            task.wait(1)
+            task.wait(1.5)
             for _, v in ipairs(mainUI.Garage.Container.Vehicles:GetChildren()) do
                 if v:IsA("ImageButton") and v.Name ~= "Teleport" then
                     clickGui(v)
-                    task.wait(1.5)
+                    task.wait(2.5) -- Đợi xe tạo ra hoàn toàn
                     break
                 end
             end
+            _G.isSpawningCar = false
+        end)
+        return
+    end
+
+    -- KIỂM TRA PHÒNG ĐUA VÀ HỒI XE KHI HẾT TRẬN
+    if not gui:FindFirstChild("Races") or not gui.Races.Container.Visible then
+        if _G.wasRace and not pcall(hasActiveCar) then
+            _G.wasRace = nil
+            _G.isSpawningCar = true
+            task.spawn(function()
+                print("[System] 🔄 Hết trận, đang hồi lại xe mới...")
+                clickGui(mainUI.UI_Frame.Buttons.Spawn)
+                task.wait(1.2)
+                for _, v in ipairs(mainUI.Garage.Container.Vehicles:GetChildren()) do
+                    if v:IsA("ImageButton") and v.Name ~= "Teleport" then
+                        clickGui(v)
+                        task.wait(2.5)
+                        break
+                    end
+                end
+                _G.isSpawningCar = false
+            end)
+            return
         end
         
-        if now - lastTeleportTime > 5 then
+        if now - lastTeleportTime > 5 and not _G.isSpawningCar then
             lastTeleportTime = now
             clickGui(mainUI.Teleport.Container.Races.Race8.Container.Teleport)
             task.wait(2)
@@ -270,7 +285,7 @@ local function mainAutoFarm()
 end
 
 -- ================== KHỞI CHẠY TIẾN TRÌNH ==================
-print("[System] 🚀 Khởi chạy: Đã xóa nền đen + Fix spam xe + Đặt Boost mỗi 15 phút!")
+print("[System] 🚀 Khởi chạy: Đã sửa triệt để lỗi triệu hồi xe + Boost 15 phút!")
 task.wait(2)
 
 local cashObj = getCashObject()
@@ -330,10 +345,10 @@ task.spawn(function()
         if not _G.AutoFarmV2_Running then return end
         
         local now = tick()
-        if now - lastBoostTime >= 900 then -- 900 giây = 15 phút
+        if now - lastBoostTime >= 900 then 
             pcall(function()
                 local gui = player.PlayerGui
-                if not gui or gui.Races.Container.Visible then return end -- Không mở khi đang đua
+                if not gui or gui.Races.Container.Visible then return end 
 
                 local mainUI = gui:FindFirstChild("Main_User_Interface")
                 if not mainUI then return end
@@ -359,7 +374,7 @@ task.spawn(function()
                         local useBtn = robuxShop.Menu.List.Boosts.Boost.Use
                         if useBtn.Visible == true then
                             clickGui(useBtn)
-                            lastBoostTime = tick() -- Đặt lại mốc thời gian sau khi dùng thành công
+                            lastBoostTime = tick() 
                             print("[Boost] ✅ Đã kích hoạt Boost tự động (Hẹn giờ 15 phút)!")
                             task.wait(0.5)
                         end
@@ -375,7 +390,6 @@ task.spawn(function()
                         end
                     end
                     
-                    -- Đóng shop lại ngay sau khi xử lý xong
                     for _, btn in ipairs(robuxShop:GetDescendants()) do
                         if (btn:IsA("TextButton") or btn:IsA("ImageButton")) and (btn.Text == "X" or btn.Text == "✕" or btn.Name:lower():find("close")) then
                             clickGui(btn)
