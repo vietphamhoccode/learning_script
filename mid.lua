@@ -14,6 +14,7 @@ _G.AutoFarmV2_Running = true
 local API_URL = "https://keywave.site/api.php"
 local HEARTBEAT_INTERVAL = 1
 _G.raceProgress = "N/A"
+_G.wasRace = nil -- Biến kiểm tra trạng thái vừa chạy xong đua để hồi xe
 
 local http_request = request or http_request or (syn and syn.request) or (fluxus and fluxus.request)
 local MyCar = nil
@@ -23,9 +24,7 @@ local lastTeleportTime = 0
 local lastUpdate = 0
 local lastClaimTime = 0
 local lastCloseTime = 0
-local lastAFKTime = 0
 local lastNoclipCar = nil
-local raceStartTime = 0
 local lastWatchdogPing = tick()
 
 -- ================== HÀM HỖ TRỢ ==================
@@ -153,7 +152,7 @@ local function closeRewardModal()
     end)
 end
 
--- ================== MAIN AUTO FARM ==================
+-- ================== MAIN AUTO FARM (ĐÃ SỬA TRIỆU HỒI XE) ==================
 local function mainAutoFarm()
     if not _G.AutoFarmV2_Running then return end
     lastWatchdogPing = tick()
@@ -178,6 +177,7 @@ local function mainAutoFarm()
     local mainUI = gui:FindFirstChild("Main_User_Interface")
     if not mainUI then return end
 
+    -- LÓGIC TRIỆU HỒI XE KHI CHƯA CÓ INTERFACE LÁI XE
     if not gui:FindFirstChild("A-Chassis Interface") then
         clickGui(mainUI.UI_Frame.Buttons.Spawn)
         task.wait(1.3)
@@ -191,22 +191,50 @@ local function mainAutoFarm()
         return
     end
 
+    -- KIỂM TRA PHÒNG ĐUA
     if not gui:FindFirstChild("Races") or not gui.Races.Container.Visible then
-        if now - lastTeleportTime > 6 then
+        -- THAY ĐỔI: Sử dụng lách luật `_G.wasRace` giống code 2 để gọi lại xe khi đột ngột mất giao diện đua
+        if _G.wasRace then
+            _G.wasRace = nil
+            clickGui(mainUI.UI_Frame.Buttons.Spawn)
+            task.wait(1)
+            for _, v in ipairs(mainUI.Garage.Container.Vehicles:GetChildren()) do
+                if v:IsA("ImageButton") and v.Name ~= "Teleport" then
+                    clickGui(v)
+                    task.wait(1.5)
+                    break
+                end
+            end
+        end
+        
+        if now - lastTeleportTime > 5 then
             lastTeleportTime = now
             clickGui(mainUI.Teleport.Container.Races.Race8.Container.Teleport)
-            task.wait(2.5)
+            task.wait(2)
         end
         return
     end
 
+    -- Tìm phòng đua của bản thân trong Race8
     MyRace = nil
-    for _, race in ipairs(workspace.Races:GetDescendants()) do
-        if race:FindFirstChild("Racers") and race.Racers:FindFirstChild(player.Name) then
-            MyRace = race
-            break
+    local racesFolder = workspace:FindFirstChild("Races") and workspace.Races:FindFirstChild("Race8") and workspace.Races.Race8:FindFirstChild("Races")
+    if racesFolder then
+        for _, race in ipairs(racesFolder:GetChildren()) do
+            if race:FindFirstChild("Racers") and race.Racers:FindFirstChild(player.Name) then
+                MyRace = race
+                break
+            end
+        end
+    else
+        -- Fallback tìm toàn bộ workspace nếu cấu trúc đổi
+        for _, race in ipairs(workspace:GetDescendants()) do
+            if race.Name == "Racers" and race:FindFirstChild(player.Name) then
+                MyRace = race.Parent
+                break
+            end
         end
     end
+    
     if not MyRace then return end
 
     local racer = MyRace.Racers:FindFirstChild(player.Name)
@@ -214,46 +242,54 @@ local function mainAutoFarm()
     MyCar = racer.Vehicle.Value
     if not MyCar or not MyCar.PrimaryPart then return end
 
+    -- Đánh dấu đang trong trận đấu thực tế
+    _G.wasRace = true
+
     local currentCP = racer:GetAttribute("Checkpoint") or 0
-    local totalCP = MyRace:FindFirstChild("Checkpoints") and MyRace.Checkpoints.Value or 12
+    local checkpointsFolder = MyRace:FindFirstChild("Checkpoints")
+    local totalCP = checkpointsFolder and checkpointsFolder.Value or 12
     _G.raceProgress = currentCP .. "/" .. totalCP
 
+    -- Noclip xe và nhân vật để tránh kẹt
     if MyCar ~= lastNoclipCar then
         lastNoclipCar = MyCar
         for _, v in ipairs(MyCar:GetDescendants()) do if v:IsA("BasePart") then v.CanCollide = false end end
+        if player.Character then
+            for _, v in ipairs(player.Character:GetDescendants()) do if v:IsA("BasePart") then v.CanCollide = false end end
+        end
     end
 
     if currentCP >= totalCP then
-        if now - lastFinishTime > 4 then
+        if now - lastFinishTime > 3 then
             lastFinishTime = now
             closeRewardModal()
-            task.wait(0.8)
+            task.wait(0.5)
             clickGui(mainUI.Teleport.Container.Races.Race8.Container.Teleport)
         end
         return
     end
 
-    if now - lastUpdate < 0.028 then return end
+    if now - lastUpdate < 0.025 then return end
     lastUpdate = now
 
     local hrp = MyCar.PrimaryPart
     local nextCPNum = currentCP + 1
     local cpName = (nextCPNum >= totalCP) and "Finish" or tostring(nextCPNum)
-    local checkpointPart = MyRace:FindFirstChild(cpName, true) or MyRace:FindFirstChild("Finish", true)
+    local checkpointPart = MyRace:FindFirstChild(cpName, true)
 
     if checkpointPart then
-        local targetPos = checkpointPart.Position + Vector3.new(0, 5, 0) + (hrp.CFrame.LookVector * 22)
-        local dist = (targetPos - hrp.Position).Magnitude
-        local speed = 1480
-        if dist < 45 then speed = 1820 end
-        if cpName == "Finish" or nextCPNum >= totalCP - 2 then speed = 2280 end
-        hrp.AssemblyLinearVelocity = (targetPos - hrp.Position).Unit * speed + Vector3.new(0, 35, 0)
-        hrp:PivotTo(hrp.CFrame:Lerp(CFrame.lookAt(hrp.Position, targetPos), 0.95))
+        local targetPos = checkpointPart.Position
+        -- Bay mượt và khóa hướng nhìn chuẩn xác theo code 2
+        local mathlock = 550
+        if (targetPos - hrp.Position).Magnitude < 45 then mathlock = 700 end
+        
+        hrp.Velocity = hrp.CFrame.LookVector * mathlock
+        MyCar:PivotTo(CFrame.new(hrp.Position, targetPos))
     end
 end
 
--- ================== KHỞI CHẠY ==================
-print("[System] 🚀 Full Script (Đầy đủ + Mở Shop + Boost + Anti-AFK) đang chạy...")
+-- ================== KHỞI CHẠY KHÔNG ĐỔI ==================
+print("[System] 🚀 Đã fix lỗi hồi xe thành công và đang chạy...")
 enableBlackScreenAndLowGraphics()
 cleanVisuals()
 task.wait(2)
@@ -271,7 +307,7 @@ end)
 table.insert(_G.AutoFarmV2_Connections, cashConn)
 
 task.spawn(function()
-    while task.wait(0.03) do if _G.AutoFarmV2_Running then pcall(mainAutoFarm) end end
+    while task.wait(0.01) do if _G.AutoFarmV2_Running then pcall(mainAutoFarm) end end
 end)
 
 task.spawn(function()
@@ -310,20 +346,19 @@ task.spawn(function()
     end
 end)
 
--- ================== MỞ SHOP + DÙNG BOOST (ĐÚNG LOG CỦA BẠN) ==================
+-- ================== MỞ SHOP + DÙNG BOOST ==================
 task.spawn(function()
     while task.wait(10) do
         if not _G.AutoFarmV2_Running then return end
         pcall(function()
             local gui = player.PlayerGui
-            if not gui then return end
+            if not gui or gui.Races.Container.Visible then return end -- Không mở shop khi đang đua để tránh lỗi kẹt xe
 
             local mainUI = gui:FindFirstChild("Main_User_Interface")
             if not mainUI then return end
 
             local robuxShop = gui:FindFirstChild("RobuxShop")
             
-            -- Only click Store to open if it's not already open/enabled
             if not robuxShop or not robuxShop.Enabled then
                 local storeBtn = mainUI:FindFirstChild("UI_Frame") and mainUI.UI_Frame:FindFirstChild("Buttons") and mainUI.UI_Frame.Buttons:FindFirstChild("Store")
                 if storeBtn then
@@ -332,20 +367,14 @@ task.spawn(function()
                 end
             end
 
-            -- Re-check if shop is open
             robuxShop = gui:FindFirstChild("RobuxShop")
             if robuxShop and robuxShop.Enabled then
-                -- Choose Rewards in Shop
                 if robuxShop:FindFirstChild("Menu") and robuxShop.Menu:FindFirstChild("Categories") then
                     local rewardsCat = robuxShop.Menu.Categories:FindFirstChild("Rewards")
-                    if rewardsCat then
-                        clickGui(rewardsCat)
-                        task.wait(0.4)
-                    end
+                    if rewardsCat then clickGui(rewardsCat); task.wait(0.4) end
                 end
 
-                -- Use Boost
-                if robuxShop:FindFirstChild("Menu") and robuxShop.Menu:FindFirstChild("List") and robuxShop.Menu.List:FindFirstChild("Boosts") and robuxShop.Menu.List.Boosts:FindFirstChild("Boost") and robuxShop.Menu.List.Boosts.Boost:FindFirstChild("Use") then
+                if robuxShop.Menu:FindFirstChild("List") and robuxShop.Menu.List:FindFirstChild("Boosts") and robuxShop.Menu.List.Boosts:FindFirstChild("Boost") and robuxShop.Menu.List.Boosts.Boost:FindFirstChild("Use") then
                     local useBtn = robuxShop.Menu.List.Boosts.Boost.Use
                     if useBtn.Visible == true then
                         clickGui(useBtn)
@@ -354,8 +383,7 @@ task.spawn(function()
                     end
                 end
 
-                -- Redeem Code
-                if robuxShop:FindFirstChild("Menu") and robuxShop.Menu:FindFirstChild("List") and robuxShop.Menu.List:FindFirstChild("Rewards") and robuxShop.Menu.List.Rewards:FindFirstChild("Codes") then
+                if robuxShop.Menu:FindFirstChild("List") and robuxShop.Menu.List:FindFirstChild("Rewards") and robuxShop.Menu.List.Rewards:FindFirstChild("Codes") then
                     local redeem = robuxShop.Menu.List.Rewards.Codes:FindFirstChild("Redeem")
                     if redeem then
                         robuxShop.Menu.List.Rewards.Codes.Input.Text = "ThanksFor810k"
@@ -365,7 +393,6 @@ task.spawn(function()
                     end
                 end
                 
-                -- Close Shop after processing so it doesn't block spawning
                 for _, btn in ipairs(robuxShop:GetDescendants()) do
                     if (btn:IsA("TextButton") or btn:IsA("ImageButton")) and (btn.Text == "X" or btn.Text == "✕" or btn.Name:lower():find("close")) then
                         clickGui(btn)
@@ -377,26 +404,19 @@ task.spawn(function()
     end
 end)
 
--- ================== ANTI-AFK MẠNH (Fix văng 20 phút) ==================
+-- ================== ANTI-AFK MẠNH ==================
 task.spawn(function()
-    print("[Anti-AFK] 🚀 Phiên bản chống kick mạnh đã kích hoạt")
     while task.wait(15) do
         if not _G.AutoFarmV2_Running then return end
         pcall(function()
             VirtualUser:CaptureController()
             VirtualUser:ClickButton2(Vector2.new(math.random(0, 100), math.random(0, 100)))
-            
             local camera = workspace.CurrentCamera
-            if camera then
-                camera.CFrame = camera.CFrame * CFrame.Angles(0, math.rad(math.random(-8,8)), 0)
-            end
-
+            if camera then camera.CFrame = camera.CFrame * CFrame.Angles(0, math.rad(math.random(-8,8)), 0) end
             local keys = {Enum.KeyCode.W, Enum.KeyCode.A, Enum.KeyCode.S, Enum.KeyCode.D, Enum.KeyCode.Space}
             VirtualUser:SendKeyEvent(true, keys[math.random(1,#keys)], false, game)
             task.wait(0.1)
             VirtualUser:SendKeyEvent(false, keys[math.random(1,#keys)], false, game)
-
-            print("[Anti-AFK] Đã thực hiện anti-kick")
         end)
     end
 end)
@@ -423,7 +443,6 @@ task.spawn(function()
                                             local btnTxt = btn.Text:lower()
                                             if btnTxt == "có" or btnTxt == "yes" or btnTxt:find("yes") or btnTxt:find("có") then
                                                 clickGui(btn)
-                                                print("[System] ✅ Đã tự động nhấn Có/Yes cho hộp thoại yêu thích!")
                                                 return true
                                             end
                                         end
@@ -436,11 +455,8 @@ task.spawn(function()
                 end
                 return false
             end
-            
-            if checkAndClick(PlayerGui) then return end
+            checkAndClick(PlayerGui)
             checkAndClick(CoreGui)
         end)
     end
 end)
-
-print("[System] ✅ Script đã đầy đủ! Mở Shop + Boost + Anti-AFK + Tự động thích đều có.")
