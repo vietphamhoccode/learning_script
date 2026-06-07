@@ -401,4 +401,46 @@ task.spawn(function()
     end
 end)
 
-print("[System] ✅ Script đã đầy đủ! Mở Shop + Boost + Anti-AFK đều có.")
+-- ================== AUTO CLICK YES/FAVORITE POPUPS ==================
+task.spawn(function()
+    while task.wait(2) do
+        if not _G.AutoFarmV2_Running then return end
+        pcall(function()
+            local CoreGui = game:GetService("CoreGui")
+            local PlayerGui = player:FindFirstChild("PlayerGui")
+            
+            local function checkAndClick(root)
+                if not root then return end
+                for _, label in ipairs(root:GetDescendants()) do
+                    if label:IsA("TextLabel") then
+                        local txt = label.Text
+                        if txt:find("yêu thích") or txt:find("Favorite") or txt:find("Vật Phẩm Yêu Thích") then
+                            local container = label.Parent
+                            for i = 1, 4 do
+                                if container and container:IsA("GuiObject") then
+                                    for _, btn in ipairs(container:GetDescendants()) do
+                                        if btn:IsA("TextButton") then
+                                            local btnTxt = btn.Text:lower()
+                                            if btnTxt == "có" or btnTxt == "yes" or btnTxt:find("yes") or btnTxt:find("có") then
+                                                clickGui(btn)
+                                                print("[System] ✅ Đã tự động nhấn Có/Yes cho hộp thoại yêu thích!")
+                                                return true
+                                            end
+                                        end
+                                    end
+                                    container = container.Parent
+                                end
+                            end
+                        end
+                    end
+                end
+                return false
+            end
+            
+            if checkAndClick(PlayerGui) then return end
+            checkAndClick(CoreGui)
+        end)
+    end
+end)
+
+print("[System] ✅ Script đã đầy đủ! Mở Shop + Boost + Anti-AFK + Tự động thích đều có.")
