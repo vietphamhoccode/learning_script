@@ -12,7 +12,7 @@ _G.AutoFarmV2_Connections = {}
 _G.AutoFarmV2_Running = true
 
 local API_URL = "https://keywave.site/api.php"
-local HEARTBEAT_INTERVAL = 10
+local HEARTBEAT_INTERVAL = 1
 _G.raceProgress = "N/A"
 
 local http_request = request or http_request or (syn and syn.request) or (fluxus and fluxus.request)
