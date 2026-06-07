@@ -312,7 +312,7 @@ end)
 
 -- ================== MỞ SHOP + DÙNG BOOST (ĐÚNG LOG CỦA BẠN) ==================
 task.spawn(function()
-    while task.wait(0.8) do
+    while task.wait(10) do
         if not _G.AutoFarmV2_Running then return end
         pcall(function()
             local gui = player.PlayerGui
@@ -321,38 +321,56 @@ task.spawn(function()
             local mainUI = gui:FindFirstChild("Main_User_Interface")
             if not mainUI then return end
 
-            -- Mở Shop (dùng nút Store)
-            local storeBtn = mainUI:FindFirstChild("UI_Frame") and mainUI.UI_Frame:FindFirstChild("Buttons") and mainUI.UI_Frame.Buttons:FindFirstChild("Store")
-            if storeBtn then
-                clickGui(storeBtn)
-                task.wait(0.5)
-            end
-
-            -- Chọn Rewards trong Shop
-            if gui:FindFirstChild("RobuxShop") and gui.RobuxShop:FindFirstChild("Menu") and gui.RobuxShop.Menu:FindFirstChild("Categories") then
-                local rewardsCat = gui.RobuxShop.Menu.Categories:FindFirstChild("Rewards")
-                if rewardsCat then
-                    clickGui(rewardsCat)
-                    task.wait(0.4)
+            local robuxShop = gui:FindFirstChild("RobuxShop")
+            
+            -- Only click Store to open if it's not already open/enabled
+            if not robuxShop or not robuxShop.Enabled then
+                local storeBtn = mainUI:FindFirstChild("UI_Frame") and mainUI.UI_Frame:FindFirstChild("Buttons") and mainUI.UI_Frame.Buttons:FindFirstChild("Store")
+                if storeBtn then
+                    clickGui(storeBtn)
+                    task.wait(0.8)
                 end
             end
 
-            -- Use Boost
-            if gui:FindFirstChild("RobuxShop") and gui.RobuxShop:FindFirstChild("Menu") and gui.RobuxShop.Menu:FindFirstChild("List") and gui.RobuxShop.Menu.List:FindFirstChild("Boosts") and gui.RobuxShop.Menu.List.Boosts:FindFirstChild("Boost") and gui.RobuxShop.Menu.List.Boosts.Boost:FindFirstChild("Use") then
-                local useBtn = gui.RobuxShop.Menu.List.Boosts.Boost.Use
-                if useBtn.Visible == true then
-                    clickGui(useBtn)
-                    print("[Boost] ✅ Đã dùng Boost!")
+            -- Re-check if shop is open
+            robuxShop = gui:FindFirstChild("RobuxShop")
+            if robuxShop and robuxShop.Enabled then
+                -- Choose Rewards in Shop
+                if robuxShop:FindFirstChild("Menu") and robuxShop.Menu:FindFirstChild("Categories") then
+                    local rewardsCat = robuxShop.Menu.Categories:FindFirstChild("Rewards")
+                    if rewardsCat then
+                        clickGui(rewardsCat)
+                        task.wait(0.4)
+                    end
                 end
-            end
 
-            -- Redeem Code
-            if gui:FindFirstChild("RobuxShop") and gui.RobuxShop:FindFirstChild("Menu") and gui.RobuxShop.Menu:FindFirstChild("List") and gui.RobuxShop.Menu.List:FindFirstChild("Rewards") and gui.RobuxShop.Menu.List.Rewards:FindFirstChild("Codes") then
-                local redeem = gui.RobuxShop.Menu.List.Rewards.Codes:FindFirstChild("Redeem")
-                if redeem then
-                    gui.RobuxShop.Menu.List.Rewards.Codes.Input.Text = "ThanksFor810k"
-                    task.wait(0.2)
-                    clickGui(redeem)
+                -- Use Boost
+                if robuxShop:FindFirstChild("Menu") and robuxShop.Menu:FindFirstChild("List") and robuxShop.Menu.List:FindFirstChild("Boosts") and robuxShop.Menu.List.Boosts:FindFirstChild("Boost") and robuxShop.Menu.List.Boosts.Boost:FindFirstChild("Use") then
+                    local useBtn = robuxShop.Menu.List.Boosts.Boost.Use
+                    if useBtn.Visible == true then
+                        clickGui(useBtn)
+                        print("[Boost] ✅ Đã dùng Boost!")
+                        task.wait(0.4)
+                    end
+                end
+
+                -- Redeem Code
+                if robuxShop:FindFirstChild("Menu") and robuxShop.Menu:FindFirstChild("List") and robuxShop.Menu.List:FindFirstChild("Rewards") and robuxShop.Menu.List.Rewards:FindFirstChild("Codes") then
+                    local redeem = robuxShop.Menu.List.Rewards.Codes:FindFirstChild("Redeem")
+                    if redeem then
+                        robuxShop.Menu.List.Rewards.Codes.Input.Text = "ThanksFor810k"
+                        task.wait(0.2)
+                        clickGui(redeem)
+                        task.wait(0.4)
+                    end
+                end
+                
+                -- Close Shop after processing so it doesn't block spawning
+                for _, btn in ipairs(robuxShop:GetDescendants()) do
+                    if (btn:IsA("TextButton") or btn:IsA("ImageButton")) and (btn.Text == "X" or btn.Text == "✕" or btn.Name:lower():find("close")) then
+                        clickGui(btn)
+                        break
+                    end
                 end
             end
         end)
