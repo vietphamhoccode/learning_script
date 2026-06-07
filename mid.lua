@@ -1,56 +1,73 @@
+[span_2](start_span)local codes = _G.codes or {"ThanksFor810k"}[span_2](end_span)
+
 local Players = game:GetService("Players")
 local HttpService = game:GetService("HttpService")
-local VirtualUser = game:GetService("VirtualUser")
-local Lighting = game:GetService("Lighting")
-local player = Players.LocalPlayer
+local ContentProvider = game:GetService("ContentProvider")
+local plr = Players.LocalPlayer
 
-while not player do task.wait(0.5); player = Players.LocalPlayer end
+-- ==================== HÀM CHỜ GAME LOAD HOÀN TOÀN ====================
+local function waitForGameToLoad()
+    print("[System] ⏳ Đang chờ trò chơi tải dữ liệu...")
+    
+    -- 1. Chờ game load xong các asset cơ bản của Roblox
+    if not game:IsLoaded() then
+        game.Loaded:Wait()
+    end
+    
+    -- 2. Chờ LocalPlayer tồn tại
+    while not plr do 
+        task.wait(0.5) 
+        plr = Players.LocalPlayer 
+    end
+    
+    -- 3. Chờ Nhân vật (Character) và Nhân thể (HumanoidRootPart) xuất hiện
+    if not plr.Character then
+        plr.CharacterAdded:Wait()
+    end
+    local character = plr.Character
+    while not character:FindFirstChild("HumanoidRootPart") or not character:FindFirstChild("Humanoid") do
+        task.wait(0.5)
+    end
+    
+    -- 4. Chờ giao diện UI chính của game xuất hiện trong PlayerGui
+    while not plr:FindFirstChild("PlayerGui") or not plr.PlayerGui:FindFirstChild("Main_User_Interface") do
+        task.wait(0.5)
+    end
+    
+    print("[System] ✅ Trò chơi đã tải xong! Bắt đầu kích hoạt Auto Farm...")
+end
 
-if _G.AutoFarmV2_Running then _G.AutoFarmV2_Running = false task.wait(2) end
-if _G.AutoFarmV2_Connections then for _, c in ipairs(_G.AutoFarmV2_Connections) do pcall(function() c:Disconnect() end) end end
-_G.AutoFarmV2_Connections = {}
-_G.AutoFarmV2_Running = true
+-- Kích hoạt hàm chờ trước khi chạy các logic phía dưới
+waitForGameToLoad()
 
+-- ==================== CẤU HÌNH BIẾN PHỤ TRỢ ====================
 local API_URL = "https://keywave.site/api.php"
-local HEARTBEAT_INTERVAL = 1
-_G.raceProgress = "N/A"
-_G.wasRace = nil 
-_G.isSpawningCar = false -- Biến khóa chống spam khi đang gọi xe
-
 local http_request = request or http_request or (syn and syn.request) or (fluxus and fluxus.request)
-local MyCar = nil
-local MyRace = nil
-local lastFinishTime = 0
-local lastTeleportTime = 0
-local lastUpdate = 0
-local lastClaimTime = 0
-local lastCloseTime = 0
-local lastNoclipCar = nil
-local lastWatchdogPing = tick()
-local lastBoostTime = 0 
+local _lastSentCash = -1
+local lastBoostTime = 0
+_G.raceProgress = "N/A"
 
--- ================== HÀM HỖ TRỢ ==================
-local function clickGui(obj)
-    if not obj then return end
+function clickGui(guiObject)
+    if not guiObject then return end
     pcall(function()
         if firesignal then
-            firesignal(obj.Activated)
-            firesignal(obj.MouseButton1Click)
+            [span_3](start_span)firesignal(guiObject.Activated)[span_3](end_span)
+            [span_4](start_span)firesignal(guiObject.MouseButton1Click)[span_4](end_span)
         else
-            obj:Activate()
+            guiObject:Activate()
         end
     end)
 end
 
-local _lastSentCash = -1
+-- Hàm gửi dữ liệu lên API
 local function sendData(cashValue, raceProgress)
     if not http_request then return end
     if cashValue == _lastSentCash and raceProgress == _G.raceProgress then return end
     _lastSentCash = cashValue
     pcall(function()
         local payload = HttpService:JSONEncode({
-            username = player.Name,
-            user_id = player.UserId,
+            username = plr.Name,
+            user_id = plr.UserId,
             cash = cashValue or 0,
             race_progress = raceProgress or "N/A",
             place_id = game.PlaceId,
@@ -61,400 +78,191 @@ local function sendData(cashValue, raceProgress)
     end)
 end
 
-local function getCashObject()
-    for i = 1, 60 do
-        if not _G.AutoFarmV2_Running then return nil end
-        local ls = player:FindFirstChild("leaderstats")
-        local cash = ls and ls:FindFirstChild("Cash")
-        if cash then return cash end
-        task.wait(1)
-    end
+function findMyRace()
+    local success, result = pcall(function()
+        [span_5](start_span)for i, v in pairs(workspace.Races.Race8.Races:GetChildren()) do[span_5](end_span)
+            [span_6](start_span)if v.Racers:FindFirstChild(plr.Name) then[span_6](end_span)
+                [span_7](start_span)return v[span_7](end_span)
+            end
+        end
+    end)
+    if success then return result end
     return nil
 end
 
-local function claimRewards()
-    pcall(function()
-        local gui = player.PlayerGui
-        if not gui then return end
-        local main = gui:FindFirstChild("Main_User_Interface")
-        if not main then return end
-
-        pcall(function()
-            for _, v in ipairs(main.Rewards.PlaytimeRewards.Rewards:GetChildren()) do
-                if v:FindFirstChild("Button") and not v.Button.Claimed.Visible then
-                    clickGui(v.Button); task.wait(0.2)
-                end
-            end
-        end)
-        pcall(function()
-            local dr = gui:FindFirstChild("DailyRewards")
-            if dr and dr.Menu.Today.Claim.Label.Text ~= "Claimed" then clickGui(dr.Menu.Today.Claim) end
-        end)
-        pcall(function()
-            local ch = gui:FindFirstChild("Challenges")
-            if ch then
-                for _, v in ipairs(ch.Menu.Challenges:GetChildren()) do
-                    if v:FindFirstChild("Action") and v.Action.Label.Text == "Claim" then clickGui(v.Action) end
-                end
-                pcall(function() clickGui(ch.Menu.Rewards.Claim) end)
-            end
-        end)
-    end)
+-- Hàm lấy giá trị tiền để gửi API
+local function getCashValue()
+    local ls = plr:FindFirstChild("leaderstats")
+    local cash = ls and ls:FindFirstChild("Cash")
+    return cash and cash.Value or 0
 end
 
-local function closeRewardModal()
-    pcall(function()
-        local gui = player.PlayerGui
-        if not gui then return end
-        for _, modal in ipairs(gui:GetDescendants()) do
-            if modal.Name:find("Reward") or modal.Name:find("Result") or modal.Name:find("Complete") or modal.Name:find("Finish") then
-                for _, btn in ipairs(modal:GetDescendants()) do
-                    if (btn:IsA("TextButton") or btn:IsA("ImageButton")) and (btn.Text == "X" or btn.Text == "✕" or btn.Name:lower():find("close")) then
-                        clickGui(btn); return
-                    end
-                end
-            end
-        end
-    end)
-end
-
--- FIX TRIỆT ĐỂ: Hàm kiểm tra xe nâng cao bằng cách quét toàn bộ folder Races trong Workspace
-local function hasActiveCar()
-    local races = workspace:FindFirstChild("Races")
-    if races then
-        for _, race in ipairs(races:GetDescendants()) do
-            if race.Name == "Racers" and race:FindFirstChild(player.Name) then
-                local racerObj = race[player.Name]
-                if racerObj:FindFirstChild("Vehicle") and racerObj.Vehicle.Value then
-                    return true
-                end
-            end
-        end
-    end
-    -- Kiểm tra thêm nếu xe spawn tự do ngoài map (nếu game có cơ chế này)
-    if workspace:FindFirstChild(player.Name .. "'s Car") or workspace:FindFirstChild(player.Name .. "Vehicle") then
-        return true
-    end
-    return false
-end
-
--- ================== MAIN AUTO FARM ==================
-local function mainAutoFarm()
-    if not _G.AutoFarmV2_Running then return end
-    lastWatchdogPing = tick()
-    local gui = player.PlayerGui
-    if not gui then return end
-    local now = tick()
-
-    if gui:FindFirstChild("LoadingScreen") then
-        clickGui(gui.LoadingScreen.Center.Frame.Play.Button)
-        task.wait(1)
-        return
-    end
-
-    if gui:FindFirstChild("StarterPick") and gui.StarterPick.Enabled then
-        clickGui(gui.StarterPick.Menu.Vehicles["1997 Hassan P34 LT-R"])
-        task.wait(0.5)
-        clickGui(gui.StarterPick.Menu.Buttons.Confirm)
-        task.wait(0.8)
-        return
-    end
-
-    local mainUI = gui:FindFirstChild("Main_User_Interface")
-    if not mainUI then return end
-
-    -- FIX: Nếu đang trong quá trình gọi xe, tạm dừng vòng lặp chính để tránh spam nút
-    if _G.isSpawningCar then return end
-
-    -- KIỂM TRA GỌI XE LẦN ĐẦU KHI VÀO GAME
-    if not gui:FindFirstChild("A-Chassis Interface") and not pcall(hasActiveCar) then
-        _G.isSpawningCar = true
-        task.spawn(function()
-            print("[System] 🚘 Đang tiến hành triệu hồi xe...")
-            clickGui(mainUI.UI_Frame.Buttons.Spawn)
-            task.wait(1.5)
-            for _, v in ipairs(mainUI.Garage.Container.Vehicles:GetChildren()) do
-                if v:IsA("ImageButton") and v.Name ~= "Teleport" then
-                    clickGui(v)
-                    task.wait(2.5) -- Đợi xe tạo ra hoàn toàn
-                    break
-                end
-            end
-            _G.isSpawningCar = false
-        end)
-        return
-    end
-
-    -- KIỂM TRA PHÒNG ĐUA VÀ HỒI XE KHI HẾT TRẬN
-    if not gui:FindFirstChild("Races") or not gui.Races.Container.Visible then
-        if _G.wasRace and not pcall(hasActiveCar) then
-            _G.wasRace = nil
-            _G.isSpawningCar = true
-            task.spawn(function()
-                print("[System] 🔄 Hết trận, đang hồi lại xe mới...")
-                clickGui(mainUI.UI_Frame.Buttons.Spawn)
-                task.wait(1.2)
-                for _, v in ipairs(mainUI.Garage.Container.Vehicles:GetChildren()) do
-                    if v:IsA("ImageButton") and v.Name ~= "Teleport" then
-                        clickGui(v)
-                        task.wait(2.5)
-                        break
-                    end
-                end
-                _G.isSpawningCar = false
-            end)
-            return
-        end
-        
-        if now - lastTeleportTime > 5 and not _G.isSpawningCar then
-            lastTeleportTime = now
-            clickGui(mainUI.Teleport.Container.Races.Race8.Container.Teleport)
-            task.wait(2)
-        end
-        return
-    end
-
-    -- Tìm phòng đua trong hệ thống Race8
-    MyRace = nil
-    local racesFolder = workspace:FindFirstChild("Races") and workspace.Races:FindFirstChild("Race8") and workspace.Races.Race8:FindFirstChild("Races")
-    if racesFolder then
-        for _, race in ipairs(racesFolder:GetChildren()) do
-            if race:FindFirstChild("Racers") and race.Racers:FindFirstChild(player.Name) then
-                MyRace = race
-                break
-            end
-        end
+-- LOGIC AUTO FARM GỐC TỪ FILE TEXT
+function mainAutoFarm()
+    [span_8](start_span)if plr.PlayerGui:FindFirstChild("LoadingScreen") then[span_8](end_span)
+        [span_9](start_span)clickGui(plr.PlayerGui.LoadingScreen.Center.Frame.Play.Button)[span_9](end_span)
+        [span_10](start_span)wait(1.5)[span_10](end_span)
+    [span_11](start_span)elseif plr.PlayerGui:FindFirstChild("StarterPick") and plr.PlayerGui.StarterPick.Enabled == true then[span_11](end_span)
+        [span_12](start_span)clickGui(plr.PlayerGui.StarterPick.Menu.Vehicles["1997 Hassan P34 LT-R"])[span_12](end_span)
+        [span_13](start_span)wait(0.5)[span_13](end_span)
+        [span_14](start_span)clickGui(plr.PlayerGui.StarterPick.Menu.Buttons.Confirm)[span_14](end_span)
+        [span_15](start_span)wait(0.5)[span_15](end_span)
     else
-        for _, race in ipairs(workspace:GetDescendants()) do
-            if race.Name == "Racers" and race:FindFirstChild(player.Name) then
-                MyRace = race.Parent
-                break
+        [span_16](start_span)if not plr.PlayerGui:FindFirstChild("A-Chassis Interface") then[span_16](end_span)
+            [span_17](start_span)clickGui(plr.PlayerGui.Main_User_Interface.UI_Frame.Buttons.Spawn)[span_17](end_span)
+            [span_18](start_span)for i, v in pairs(plr.PlayerGui.Main_User_Interface.Garage.Container.Vehicles:GetChildren()) do[span_18](end_span)
+                [span_19](start_span)if v:IsA("ImageButton") and v.Name ~= "Teleport" then[span_19](end_span)
+                    [span_20](start_span)clickGui(v)[span_20](end_span)
+                    [span_21](start_span)wait(1.5)[span_21](end_span)
+                    [span_22](start_span)break[span_22](end_span)
+                end
+            end
+        else
+            [span_23](start_span)if not plr.PlayerGui.Races.Container.Visible then[span_23](end_span)
+                [span_24](start_span)if _G.wasRace then[span_24](end_span)
+                    _[span_25](start_span)G.wasRace = nil[span_25](end_span)
+                    [span_26](start_span)clickGui(plr.PlayerGui.Main_User_Interface.UI_Frame.Buttons.Spawn)[span_26](end_span)
+                    [span_27](start_span)for i, v in pairs(plr.PlayerGui.Main_User_Interface.Garage.Container.Vehicles:GetChildren()) do[span_27](end_span)
+                        [span_28](start_span)if v:IsA("ImageButton") and v.Name ~= "Teleport" then[span_28](end_span)
+                            [span_29](start_span)clickGui(v)[span_29](end_span)
+                            [span_30](start_span)wait(1.5)[span_30](end_span)
+                            [span_31](start_span)break[span_31](end_span)
+                        end
+                    end
+                end
+                [span_32](start_span)clickGui(plr.PlayerGui.Main_User_Interface.Teleport.Container.Races.Race8.Container.Teleport)[span_32](end_span)
+                [span_33](start_span)wait(2)[span_33](end_span)
+            else
+                [span_34](start_span)local myRace = findMyRace()[span_34](end_span)
+                if not myRace then return end 
+                
+                local racerObj = myRace.Racers:FindFirstChild(plr.Name)
+                if not racerObj then return end
+
+                [span_35](start_span)local nextCheckpoint = racerObj:GetAttribute("Checkpoint") + 1[span_35](end_span)
+                local checkpointsFolder = nil
+                [span_36](start_span)for i, v in pairs(myRace:GetChildren()) do[span_36](end_span)
+                    [span_37](start_span)if v.Name == "Checkpoints" and v:IsA("IntValue") then[span_37](end_span)
+                        [span_38](start_span)checkpointsFolder = v[span_38](end_span)
+                        [span_39](start_span)break[span_39](end_span)
+                    end
+                end
+                
+                if not checkpointsFolder then return end
+                
+                _G.raceProgress = (nextCheckpoint - 1) .. "/" .. checkpointsFolder.Value
+
+                [span_40](start_span)local checkpointPart = checkpointsFolder:FindFirstChild(nextCheckpoint >= checkpointsFolder.Value and "Finish" or tostring(nextCheckpoint))[span_40](end_span)
+                [span_41](start_span)local myCar = racerObj.Vehicle.Value[span_41](end_span)
+                _[span_42](start_span)G.myCar = myCar[span_42](end_span)
+                _[span_43](start_span)G.myRace = myRace[span_43](end_span)
+                _[span_44](start_span)G.wasRace = true[span_44](end_span)
+
+                [span_45](start_span)if myCar and myCar.PrimaryPart and checkpointPart then[span_45](end_span)
+                    [span_46](start_span)local location = checkpointPart.Position[span_46](end_span)
+                    [span_47](start_span)local mathlock = 550[span_47](end_span)
+                    [span_48](start_span)myCar.PrimaryPart.Velocity = myCar.PrimaryPart.CFrame.LookVector * mathlock[span_48](end_span)
+                    [span_49](start_span)myCar:PivotTo(CFrame.new(myCar.PrimaryPart.Position, location))[span_49](end_span)
+                end
             end
         end
     end
-    
-    if not MyRace then return end
-
-    local racer = MyRace.Racers:FindFirstChild(player.Name)
-    if not racer then return end
-    MyCar = racer.Vehicle.Value
-    if not MyCar or not MyCar.PrimaryPart then return end
-
-    _G.wasRace = true
-
-    local currentCP = racer:GetAttribute("Checkpoint") or 0
-    local checkpointsFolder = MyRace:FindFirstChild("Checkpoints")
-    local totalCP = checkpointsFolder and checkpointsFolder.Value or 12
-    _G.raceProgress = currentCP .. "/" .. totalCP
-
-    -- Noclip xe và nhân vật
-    if MyCar ~= lastNoclipCar then
-        lastNoclipCar = MyCar
-        for _, v in ipairs(MyCar:GetDescendants()) do if v:IsA("BasePart") then v.CanCollide = false end end
-        if player.Character then
-            for _, v in ipairs(player.Character:GetDescendants()) do if v:IsA("BasePart") then v.CanCollide = false end end
-        end
-    end
-
-    if currentCP >= totalCP then
-        if now - lastFinishTime > 3 then
-            lastFinishTime = now
-            closeRewardModal()
-            task.wait(0.5)
-            clickGui(mainUI.Teleport.Container.Races.Race8.Container.Teleport)
-        end
-        return
-    end
-
-    if now - lastUpdate < 0.025 then return end
-    lastUpdate = now
-
-    local hrp = MyCar.PrimaryPart
-    local nextCPNum = currentCP + 1
-    local cpName = (nextCPNum >= totalCP) and "Finish" or tostring(nextCPNum)
-    local checkpointPart = MyRace:FindFirstChild(cpName, true)
-
-    if checkpointPart then
-        local targetPos = checkpointPart.Position
-        local mathlock = 550
-        if (targetPos - hrp.Position).Magnitude < 45 then mathlock = 700 end
-        
-        hrp.Velocity = hrp.CFrame.LookVector * mathlock
-        MyCar:PivotTo(CFrame.new(hrp.Position, targetPos))
-    end
 end
 
--- ================== KHỞI CHẠY TIẾN TRÌNH ==================
-print("[System] 🚀 Khởi chạy: Đã sửa triệt để lỗi triệu hồi xe + Boost 15 phút!")
-task.wait(2)
-
-local cashObj = getCashObject()
-if not cashObj then
-    warn("[System] ❌ Không tìm thấy Cash!")
-    _G.AutoFarmV2_Running = false
-    return
-end
-
-local cashConn = cashObj:GetPropertyChangedSignal("Value"):Connect(function()
-    if _G.AutoFarmV2_Running then pcall(sendData, cashObj.Value, _G.raceProgress) end
-end)
-table.insert(_G.AutoFarmV2_Connections, cashConn)
-
-task.spawn(function()
-    while task.wait(0.01) do if _G.AutoFarmV2_Running then pcall(mainAutoFarm) end end
-end)
-
-task.spawn(function()
-    while task.wait(1) do
-        if not _G.AutoFarmV2_Running then return end
-        local now = tick()
-        if now - lastClaimTime > 8 then lastClaimTime = now; claimRewards() end
-        if now - lastCloseTime > 2.5 then lastCloseTime = now; closeRewardModal() end
-    end
-end)
-
-task.spawn(function()
-    while task.wait(HEARTBEAT_INTERVAL) do
-        if not _G.AutoFarmV2_Running then return end
-        if not cashObj or not cashObj.Parent then cashObj = getCashObject() end
-        pcall(sendData, cashObj and cashObj.Value or 0, _G.raceProgress)
-    end
-end)
-
-task.spawn(function()
-    while task.wait(30) do
-        if not _G.AutoFarmV2_Running then return end
-        pcall(function() collectgarbage("collect") end)
-    end
-end)
-
-task.spawn(function()
-    while task.wait(30) do
-        if not _G.AutoFarmV2_Running then return end
-        if tick() - lastWatchdogPing > 45 then
-            warn("[Watchdog] Vòng lặp chính bị treo!")
-            _G.AutoFarmV2_Running = false
-            return
-        end
-    end
-end)
-
--- ================== MỞ SHOP + DÙNG BOOST (15 PHÚT / LẦN) ==================
-task.spawn(function()
-    while task.wait(10) do
-        if not _G.AutoFarmV2_Running then return end
+-- VÒNG LẶP PHỤ: GIỮ NGUYÊN LOGIC GỐC + CONFIG LẠI BOOST CHUẨN 15 PHÚT
+spawn(function()
+    while wait() do
+        [span_50](start_span)if plr.PlayerGui:FindFirstChild("LoadingScreen") then return end[span_50](end_span)
         
-        local now = tick()
-        if now - lastBoostTime >= 900 then 
-            pcall(function()
-                local gui = player.PlayerGui
-                if not gui or gui.Races.Container.Visible then return end 
-
-                local mainUI = gui:FindFirstChild("Main_User_Interface")
-                if not mainUI then return end
-
-                local robuxShop = gui:FindFirstChild("RobuxShop")
-                
-                if not robuxShop or not robuxShop.Enabled then
-                    local storeBtn = mainUI:FindFirstChild("UI_Frame") and mainUI.UI_Frame:FindFirstChild("Buttons") and mainUI.UI_Frame.Buttons:FindFirstChild("Store")
-                    if storeBtn then
-                        clickGui(storeBtn)
-                        task.wait(1)
-                    end
-                end
-
-                robuxShop = gui:FindFirstChild("RobuxShop")
-                if robuxShop and robuxShop.Enabled then
-                    if robuxShop:FindFirstChild("Menu") and robuxShop.Menu:FindFirstChild("Categories") then
-                        local rewardsCat = robuxShop.Menu.Categories:FindFirstChild("Rewards")
-                        if rewardsCat then clickGui(rewardsCat); task.wait(0.5) end
-                    end
-
-                    if robuxShop.Menu:FindFirstChild("List") and robuxShop.Menu.List:FindFirstChild("Boosts") and robuxShop.Menu.List.Boosts:FindFirstChild("Boost") and robuxShop.Menu.List.Boosts.Boost:FindFirstChild("Use") then
-                        local useBtn = robuxShop.Menu.List.Boosts.Boost.Use
-                        if useBtn.Visible == true then
-                            clickGui(useBtn)
-                            lastBoostTime = tick() 
-                            print("[Boost] ✅ Đã kích hoạt Boost tự động (Hẹn giờ 15 phút)!")
-                            task.wait(0.5)
-                        end
-                    end
-
-                    if robuxShop.Menu:FindFirstChild("List") and robuxShop.Menu.List:FindFirstChild("Rewards") and robuxShop.Menu.List.Rewards:FindFirstChild("Codes") then
-                        local redeem = robuxShop.Menu.List.Rewards.Codes:FindFirstChild("Redeem")
-                        if redeem then
-                            robuxShop.Menu.List.Rewards.Codes.Input.Text = "ThanksFor810k"
-                            task.wait(0.2)
-                            clickGui(redeem)
-                            task.wait(0.5)
-                        end
-                    end
-                    
-                    for _, btn in ipairs(robuxShop:GetDescendants()) do
-                        if (btn:IsA("TextButton") or btn:IsA("ImageButton")) and (btn.Text == "X" or btn.Text == "✕" or btn.Name:lower():find("close")) then
-                            clickGui(btn)
-                            break
-                        end
-                    end
-                end
-            end)
-        end
-    end
-end)
-
--- ================== ANTI-AFK MẠNH ==================
-task.spawn(function()
-    while task.wait(15) do
-        if not _G.AutoFarmV2_Running then return end
+        -- Logic Noclip và xoá Object vướng map gốc
         pcall(function()
-            VirtualUser:CaptureController()
-            VirtualUser:ClickButton2(Vector2.new(math.random(0, 100), math.random(0, 100)))
-            local camera = workspace.CurrentCamera
-            if camera then camera.CFrame = camera.CFrame * CFrame.Angles(0, math.rad(math.random(-8,8)), 0) end
-            local keys = {Enum.KeyCode.W, Enum.KeyCode.A, Enum.KeyCode.S, Enum.KeyCode.D, Enum.KeyCode.Space}
-            VirtualUser:SendKeyEvent(true, keys[math.random(1,#keys)], false, game)
-            task.wait(0.1)
-            VirtualUser:SendKeyEvent(false, keys[math.random(1,#keys)], false, game)
+            [span_51](start_span)if plr.PlayerGui.Races.Container.Visible and _G.myCar then[span_51](end_span)
+                [span_52](start_span)for i, v in pairs(_G.myCar:GetDescendants()) do[span_52](end_span)
+                    [span_53](start_span)if v:IsA("BasePart") then[span_53](end_span)
+                        [span_54](start_span)v.CanCollide = false[span_54](end_span)
+                    end
+                end
+                [span_55](start_span)if plr.Character then[span_55](end_span)
+                    [span_56](start_span)for i, v in pairs(plr.Character:GetDescendants()) do[span_56](end_span)
+                        [span_57](start_span)if v:IsA("BasePart") then[span_57](end_span)
+                            [span_58](start_span)v.CanCollide = false[span_58](end_span)
+                        end
+                    end
+                end
+                [span_59](start_span)for i, v in pairs(workspace:GetChildren()) do[span_59](end_span)
+                    [span_60](start_span)if v.ClassName == "Model" and v:FindFirstChild("Container") or v.Name == "PortCraneOversized" then[span_60](end_span)
+                        [span_61](start_span)v:Destroy()[span_61](end_span)
+                    end
+                end
+            end
+         pcall(function()
+            [span_62](start_span)for i, v in pairs(plr.PlayerGui.Main_User_Interface.Rewards.PlaytimeRewards.Rewards:GetChildren()) do[span_62](end_span)
+                [span_63](start_span)if v:FindFirstChild("Button") and not v.Button.Claimed.Visible then[span_63](end_span)
+                    [span_64](start_span)clickGui(v.Button)[span_64](end_span)
+                end
+            end
+        end)
+        
+        -- Auto nhận thưởng thử thách gốc
+        pcall(function()
+            [span_65](start_span)for i, v in pairs(plr.PlayerGui.Challenges.Menu.Challenges:GetChildren()) do[span_65](end_span)
+                [span_66](start_span)if v:FindFirstChild("Action") and v.Action.Label.Text == "Claim" then[span_66](end_span)
+                    [span_67](start_span)clickGui(v.Action)[span_67](end_span)
+                end
+            end
+        end)
+        
+        -- Auto nhận thưởng Daily Reward gốc
+        pcall(function()
+            [span_68](start_span)if plr.PlayerGui.DailyRewards.Menu.Today.Claim.Label.Text ~= "Claimed" then[span_68](end_span)
+                [span_69](start_span)clickGui(plr.PlayerGui.DailyRewards.Menu.Today.Claim)[span_69](end_span)
+            end
+        end)
+        
+        -- FIX MỚI: Chỉ kích hoạt Boost chuẩn 15 phút một lần (900 giây) tránh spam shop công cộng
+        pcall(function()
+            local now = tick()
+            if now - lastBoostTime >= 900 then
+                [span_70](start_span)if plr.PlayerGui.RobuxShop.Menu.List.Boosts.Boost.Use.Visible == true then[span_70](end_span)
+                    [span_71](start_span)clickGui(plr.PlayerGui.RobuxShop.Menu.List.Boosts.Boost.Use)[span_71](end_span)
+                    lastBoostTime = tick()
+                    print("[System] ✅ Kích hoạt Boost thành công (Hẹn giờ 15 phút sau làm lại)!")
+                end
+            end
+        end)
+        
+        -- Thưởng thử thách phụ gốc
+        pcall(function()
+            [span_72](start_span)clickGui(plr.PlayerGui.Challenges.Menu.Rewards.Claim)[span_72](end_span)
+        end)
+        
+        -- Nhập Giftcode gốc
+        pcall(function()
+            [span_73](start_span)for i, v in pairs(codes) do[span_73](end_span)
+                [span_74](start_span)plr.PlayerGui.RobuxShop.Menu.List.Rewards.Codes.Input.Text = v[span_74](end_span)
+                [span_75](start_span)wait()[span_75](end_span)
+                [span_76](start_span)clickGui(plr.PlayerGui.RobuxShop.Menu.List.Rewards.Codes.Redeem)[span_76](end_span)
+                [span_77](start_span)wait()[span_77](end_span)
+            end
         end)
     end
 end)
 
--- ================== AUTO CLICK POPUPS POPULAR ==================
-task.spawn(function()
-    while task.wait(2) do
-        if not _G.AutoFarmV2_Running then return end
+-- VÒNG LẶP CHÍNH CHẠY AUTO FARM GỐC
+spawn(function()
+    while wait() do
+        [span_78](start_span)local success, err = pcall(mainAutoFarm)[span_78](end_span)
+        [span_79](start_span)if not success then[span_79](end_span)
+            [span_80](start_span)print("Error mainAutoFarm: " .. tostring(err))[span_80](end_span)
+        end
+    end
+end)
+
+-- VÒNG LẶP GỬI DỮ LIỆU ĐỊNH KỲ QUA API (MỖI 1 GIÂY)
+spawn(function()
+    while task.wait(1) do
         pcall(function()
-            local CoreGui = game:GetService("CoreGui")
-            local PlayerGui = player:FindFirstChild("PlayerGui")
-            
-            local function checkAndClick(root)
-                if not root then return end
-                for _, label in ipairs(root:GetDescendants()) do
-                    if label:IsA("TextLabel") then
-                        local txt = label.Text
-                        if txt:find("yêu thích") or txt:find("Favorite") or txt:find("Vật Phẩm Yêu Thích") then
-                            local container = label.Parent
-                            for i = 1, 4 do
-                                if container and container:IsA("GuiObject") then
-                                    for _, btn in ipairs(container:GetDescendants()) do
-                                        if btn:IsA("TextButton") then
-                                            local btnTxt = btn.Text:lower()
-                                            if btnTxt == "có" or btnTxt == "yes" or btnTxt:find("yes") or btnTxt:find("có") then
-                                                clickGui(btn)
-                                                return true
-                                            end
-                                        end
-                                    end
-                                    container = container.Parent
-                                end
-                            end
-                        end
-                    end
-                end
-                return false
-            end
-            checkAndClick(PlayerGui)
-            checkAndClick(CoreGui)
+            sendData(getCashValue(), _G.raceProgress)
         end)
     end
 end)
