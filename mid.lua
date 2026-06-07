@@ -14,7 +14,7 @@ _G.AutoFarmV2_Running = true
 local API_URL = "https://keywave.site/api.php"
 local HEARTBEAT_INTERVAL = 1
 _G.raceProgress = "N/A"
-_G.wasRace = nil -- Biến kiểm tra trạng thái vừa chạy xong đua để hồi xe
+_G.wasRace = nil 
 
 local http_request = request or http_request or (syn and syn.request) or (fluxus and fluxus.request)
 local MyCar = nil
@@ -26,6 +26,7 @@ local lastClaimTime = 0
 local lastCloseTime = 0
 local lastNoclipCar = nil
 local lastWatchdogPing = tick()
+local lastBoostTime = 0 -- Biến lưu mốc thời gian sử dụng Boost
 
 -- ================== HÀM HỖ TRỢ ==================
 local function clickGui(obj)
@@ -36,42 +37,6 @@ local function clickGui(obj)
             firesignal(obj.MouseButton1Click)
         else
             obj:Activate()
-        end
-    end)
-end
-
-local function enableBlackScreenAndLowGraphics()
-    pcall(function()
-        local existingBs = player.PlayerGui:FindFirstChild("BlackScreenOptimizer")
-        if existingBs then existingBs:Destroy() end
-        local sg = Instance.new("ScreenGui")
-        sg.Name = "BlackScreenOptimizer"
-        sg.IgnoreGuiInset = true
-        sg.ResetOnSpawn = false
-        sg.Parent = player:WaitForChild("PlayerGui")
-        local frame = Instance.new("Frame")
-        frame.Size = UDim2.new(1, 0, 1, 0)
-        frame.BackgroundColor3 = Color3.new(0, 0, 0)
-        frame.BorderSizePixel = 0
-        frame.Parent = sg
-        Lighting.GlobalShadows = false
-        Lighting.FogEnd = 9e9
-        Lighting.Brightness = 0
-        Lighting.OutdoorAmbient = Color3.new(0, 0, 0)
-        Lighting.Ambient = Color3.new(0, 0, 0)
-        settings().Rendering.QualityLevel = Enum.QualityLevel.Level01
-    end)
-end
-
-local _visualsCleaned = false
-local function cleanVisuals()
-    if _visualsCleaned then return end
-    _visualsCleaned = true
-    pcall(function()
-        for _, v in ipairs(workspace:GetDescendants()) do
-            if v:IsA("ParticleEmitter") or v:IsA("Trail") or v:IsA("Smoke") or v:IsA("Fire") or v:IsA("Sparkles") or v:IsA("Beam") then
-                pcall(function() v.Enabled = false end)
-            end
         end
     end)
 end
@@ -152,7 +117,27 @@ local function closeRewardModal()
     end)
 end
 
--- ================== MAIN AUTO FARM (ĐÃ SỬA TRIỆU HỒI XE) ==================
+-- Hàm kiểm tra thực tế xem người chơi đã lên xe chưa để chặn lỗi spam gọi xe
+local function isAlreadyInCar()
+    local char = player.Character
+    if char then
+        local humanoid = char:FindFirstChildOfClass("Humanoid")
+        if humanoid and humanoid.SeatPart and humanoid.SeatPart:IsA("VehicleSeat") then
+            return true
+        end
+    end
+    for _, race in ipairs(workspace:GetDescendants()) do
+        if race.Name == "Racers" and race:FindFirstChild(player.Name) then
+            local racerObj = race[player.Name]
+            if racerObj:FindFirstChild("Vehicle") and racerObj.Vehicle.Value then
+                return true
+            end
+        end
+    end
+    return false
+end
+
+-- ================== MAIN AUTO FARM ==================
 local function mainAutoFarm()
     if not _G.AutoFarmV2_Running then return end
     lastWatchdogPing = tick()
@@ -177,14 +162,14 @@ local function mainAutoFarm()
     local mainUI = gui:FindFirstChild("Main_User_Interface")
     if not mainUI then return end
 
-    -- LÓGIC TRIỆU HỒI XE KHI CHƯA CÓ INTERFACE LÁI XE
-    if not gui:FindFirstChild("A-Chassis Interface") then
+    -- Chỉ gọi xe nếu thực tế chưa sở hữu xe và chưa có giao diện lái xe
+    if not gui:FindFirstChild("A-Chassis Interface") and not isAlreadyInCar() then
         clickGui(mainUI.UI_Frame.Buttons.Spawn)
-        task.wait(1.3)
+        task.wait(1.5)
         for _, v in ipairs(mainUI.Garage.Container.Vehicles:GetChildren()) do
             if v:IsA("ImageButton") and v.Name ~= "Teleport" then
                 clickGui(v)
-                task.wait(1.8)
+                task.wait(2)
                 break
             end
         end
@@ -193,8 +178,7 @@ local function mainAutoFarm()
 
     -- KIỂM TRA PHÒNG ĐUA
     if not gui:FindFirstChild("Races") or not gui.Races.Container.Visible then
-        -- THAY ĐỔI: Sử dụng lách luật `_G.wasRace` giống code 2 để gọi lại xe khi đột ngột mất giao diện đua
-        if _G.wasRace then
+        if _G.wasRace and not isAlreadyInCar() then
             _G.wasRace = nil
             clickGui(mainUI.UI_Frame.Buttons.Spawn)
             task.wait(1)
@@ -215,7 +199,7 @@ local function mainAutoFarm()
         return
     end
 
-    -- Tìm phòng đua của bản thân trong Race8
+    -- Tìm phòng đua trong hệ thống Race8
     MyRace = nil
     local racesFolder = workspace:FindFirstChild("Races") and workspace.Races:FindFirstChild("Race8") and workspace.Races.Race8:FindFirstChild("Races")
     if racesFolder then
@@ -226,7 +210,6 @@ local function mainAutoFarm()
             end
         end
     else
-        -- Fallback tìm toàn bộ workspace nếu cấu trúc đổi
         for _, race in ipairs(workspace:GetDescendants()) do
             if race.Name == "Racers" and race:FindFirstChild(player.Name) then
                 MyRace = race.Parent
@@ -242,7 +225,6 @@ local function mainAutoFarm()
     MyCar = racer.Vehicle.Value
     if not MyCar or not MyCar.PrimaryPart then return end
 
-    -- Đánh dấu đang trong trận đấu thực tế
     _G.wasRace = true
 
     local currentCP = racer:GetAttribute("Checkpoint") or 0
@@ -250,7 +232,7 @@ local function mainAutoFarm()
     local totalCP = checkpointsFolder and checkpointsFolder.Value or 12
     _G.raceProgress = currentCP .. "/" .. totalCP
 
-    -- Noclip xe và nhân vật để tránh kẹt
+    -- Noclip xe và nhân vật
     if MyCar ~= lastNoclipCar then
         lastNoclipCar = MyCar
         for _, v in ipairs(MyCar:GetDescendants()) do if v:IsA("BasePart") then v.CanCollide = false end end
@@ -279,7 +261,6 @@ local function mainAutoFarm()
 
     if checkpointPart then
         local targetPos = checkpointPart.Position
-        -- Bay mượt và khóa hướng nhìn chuẩn xác theo code 2
         local mathlock = 550
         if (targetPos - hrp.Position).Magnitude < 45 then mathlock = 700 end
         
@@ -288,10 +269,8 @@ local function mainAutoFarm()
     end
 end
 
--- ================== KHỞI CHẠY KHÔNG ĐỔI ==================
-print("[System] 🚀 Đã fix lỗi hồi xe thành công và đang chạy...")
-enableBlackScreenAndLowGraphics()
-cleanVisuals()
+-- ================== KHỞI CHẠY TIẾN TRÌNH ==================
+print("[System] 🚀 Khởi chạy: Đã xóa nền đen + Fix spam xe + Đặt Boost mỗi 15 phút!")
 task.wait(2)
 
 local cashObj = getCashObject()
@@ -331,7 +310,6 @@ task.spawn(function()
     while task.wait(30) do
         if not _G.AutoFarmV2_Running then return end
         pcall(function() collectgarbage("collect") end)
-        if not player.PlayerGui:FindFirstChild("BlackScreenOptimizer") then enableBlackScreenAndLowGraphics() end
     end
 end)
 
@@ -346,61 +324,67 @@ task.spawn(function()
     end
 end)
 
--- ================== MỞ SHOP + DÙNG BOOST ==================
+-- ================== MỞ SHOP + DÙNG BOOST (15 PHÚT / LẦN) ==================
 task.spawn(function()
     while task.wait(10) do
         if not _G.AutoFarmV2_Running then return end
-        pcall(function()
-            local gui = player.PlayerGui
-            if not gui or gui.Races.Container.Visible then return end -- Không mở shop khi đang đua để tránh lỗi kẹt xe
+        
+        local now = tick()
+        if now - lastBoostTime >= 900 then -- 900 giây = 15 phút
+            pcall(function()
+                local gui = player.PlayerGui
+                if not gui or gui.Races.Container.Visible then return end -- Không mở khi đang đua
 
-            local mainUI = gui:FindFirstChild("Main_User_Interface")
-            if not mainUI then return end
+                local mainUI = gui:FindFirstChild("Main_User_Interface")
+                if not mainUI then return end
 
-            local robuxShop = gui:FindFirstChild("RobuxShop")
-            
-            if not robuxShop or not robuxShop.Enabled then
-                local storeBtn = mainUI:FindFirstChild("UI_Frame") and mainUI.UI_Frame:FindFirstChild("Buttons") and mainUI.UI_Frame.Buttons:FindFirstChild("Store")
-                if storeBtn then
-                    clickGui(storeBtn)
-                    task.wait(0.8)
-                end
-            end
-
-            robuxShop = gui:FindFirstChild("RobuxShop")
-            if robuxShop and robuxShop.Enabled then
-                if robuxShop:FindFirstChild("Menu") and robuxShop.Menu:FindFirstChild("Categories") then
-                    local rewardsCat = robuxShop.Menu.Categories:FindFirstChild("Rewards")
-                    if rewardsCat then clickGui(rewardsCat); task.wait(0.4) end
-                end
-
-                if robuxShop.Menu:FindFirstChild("List") and robuxShop.Menu.List:FindFirstChild("Boosts") and robuxShop.Menu.List.Boosts:FindFirstChild("Boost") and robuxShop.Menu.List.Boosts.Boost:FindFirstChild("Use") then
-                    local useBtn = robuxShop.Menu.List.Boosts.Boost.Use
-                    if useBtn.Visible == true then
-                        clickGui(useBtn)
-                        print("[Boost] ✅ Đã dùng Boost!")
-                        task.wait(0.4)
-                    end
-                end
-
-                if robuxShop.Menu:FindFirstChild("List") and robuxShop.Menu.List:FindFirstChild("Rewards") and robuxShop.Menu.List.Rewards:FindFirstChild("Codes") then
-                    local redeem = robuxShop.Menu.List.Rewards.Codes:FindFirstChild("Redeem")
-                    if redeem then
-                        robuxShop.Menu.List.Rewards.Codes.Input.Text = "ThanksFor810k"
-                        task.wait(0.2)
-                        clickGui(redeem)
-                        task.wait(0.4)
-                    end
-                end
+                local robuxShop = gui:FindFirstChild("RobuxShop")
                 
-                for _, btn in ipairs(robuxShop:GetDescendants()) do
-                    if (btn:IsA("TextButton") or btn:IsA("ImageButton")) and (btn.Text == "X" or btn.Text == "✕" or btn.Name:lower():find("close")) then
-                        clickGui(btn)
-                        break
+                if not robuxShop or not robuxShop.Enabled then
+                    local storeBtn = mainUI:FindFirstChild("UI_Frame") and mainUI.UI_Frame:FindFirstChild("Buttons") and mainUI.UI_Frame.Buttons:FindFirstChild("Store")
+                    if storeBtn then
+                        clickGui(storeBtn)
+                        task.wait(1)
                     end
                 end
-            end
-        end)
+
+                robuxShop = gui:FindFirstChild("RobuxShop")
+                if robuxShop and robuxShop.Enabled then
+                    if robuxShop:FindFirstChild("Menu") and robuxShop.Menu:FindFirstChild("Categories") then
+                        local rewardsCat = robuxShop.Menu.Categories:FindFirstChild("Rewards")
+                        if rewardsCat then clickGui(rewardsCat); task.wait(0.5) end
+                    end
+
+                    if robuxShop.Menu:FindFirstChild("List") and robuxShop.Menu.List:FindFirstChild("Boosts") and robuxShop.Menu.List.Boosts:FindFirstChild("Boost") and robuxShop.Menu.List.Boosts.Boost:FindFirstChild("Use") then
+                        local useBtn = robuxShop.Menu.List.Boosts.Boost.Use
+                        if useBtn.Visible == true then
+                            clickGui(useBtn)
+                            lastBoostTime = tick() -- Đặt lại mốc thời gian sau khi dùng thành công
+                            print("[Boost] ✅ Đã kích hoạt Boost tự động (Hẹn giờ 15 phút)!")
+                            task.wait(0.5)
+                        end
+                    end
+
+                    if robuxShop.Menu:FindFirstChild("List") and robuxShop.Menu.List:FindFirstChild("Rewards") and robuxShop.Menu.List.Rewards:FindFirstChild("Codes") then
+                        local redeem = robuxShop.Menu.List.Rewards.Codes:FindFirstChild("Redeem")
+                        if redeem then
+                            robuxShop.Menu.List.Rewards.Codes.Input.Text = "ThanksFor810k"
+                            task.wait(0.2)
+                            clickGui(redeem)
+                            task.wait(0.5)
+                        end
+                    end
+                    
+                    -- Đóng shop lại ngay sau khi xử lý xong
+                    for _, btn in ipairs(robuxShop:GetDescendants()) do
+                        if (btn:IsA("TextButton") or btn:IsA("ImageButton")) and (btn.Text == "X" or btn.Text == "✕" or btn.Name:lower():find("close")) then
+                            clickGui(btn)
+                            break
+                        end
+                    end
+                end
+            end)
+        end
     end
 end)
 
@@ -421,7 +405,7 @@ task.spawn(function()
     end
 end)
 
--- ================== AUTO CLICK YES/FAVORITE POPUPS ==================
+-- ================== AUTO CLICK POPUPS POPULAR ==================
 task.spawn(function()
     while task.wait(2) do
         if not _G.AutoFarmV2_Running then return end
