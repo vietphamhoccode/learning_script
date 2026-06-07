@@ -11,7 +11,7 @@ if _G.AutoFarmV2_Connections then for _, c in ipairs(_G.AutoFarmV2_Connections) 
 _G.AutoFarmV2_Connections = {}
 _G.AutoFarmV2_Running = true
 
-local API_URL = "https://vietpham.shop/api.php"
+local API_URL = "https://keywave.site/api.php"
 local HEARTBEAT_INTERVAL = 10
 _G.raceProgress = "N/A"
 
