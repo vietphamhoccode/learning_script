@@ -14,8 +14,10 @@
     const defaultConfig = {
         autoRun: false,
         enableSign: true,
+        autoRefreshList: true,
         autoDisableOnLoginAlert: true,
         speedDelay: 40,
+        emptyWaitMs: 3000,
 
         bpBases: [
             { sys: 100, dia: 60, enabled: true },
@@ -59,6 +61,8 @@
     let completedCount = 0;
     let isRunning = false;
     let isPaused = false;
+    let refreshRequested = false;
+    let isRefreshingList = false;
 
     const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
@@ -223,6 +227,92 @@
                 statusText.textContent = reason ? `ĐÃ TẮT (${reason})` : 'ĐÃ TẮT';
                 statusText.style.color = '#d32f2f';
             }
+        }
+    }
+
+    function setAutoRefreshEnabled(enabled) {
+        config.autoRefreshList = !!enabled;
+        const btn = document.getElementById('ak-btn-toggle-refresh');
+        const desc = document.getElementById('auto-ksk-refresh-desc');
+        const statusText = document.getElementById('auto-ksk-refresh-status-text');
+
+        if (btn) {
+            if (config.autoRefreshList) {
+                btn.className = 'ak-btn-sign-toggle ak-sign-on';
+                btn.innerHTML = '<span>⟳ ĐANG BẬT</span>';
+                if (desc) desc.textContent = 'Tự động bấm #lammoi & chờ BN mới';
+            } else {
+                btn.className = 'ak-btn-sign-toggle ak-sign-off';
+                btn.innerHTML = '<span>⏸ ĐÃ TẮT</span>';
+                if (desc) desc.textContent = 'Chỉ xử lý danh sách hiện tại';
+            }
+        }
+
+        if (statusText) {
+            if (config.autoRefreshList) {
+                statusText.textContent = 'ĐANG BẬT';
+                statusText.style.color = '#2e7d32';
+            } else {
+                statusText.textContent = 'ĐÃ TẮT';
+                statusText.style.color = '#64748b';
+            }
+        }
+    }
+
+    function isLoadingUI() {
+        if (window.jQuery) {
+            if ($('.blockUI').filter(':visible').length) return true;
+            if ($('#load_list1').is(':visible')) return true;
+            let busy = false;
+            $('.loading').each(function () {
+                if ($(this).is(':visible') && $(this).css('display') !== 'none') busy = true;
+            });
+            if (busy) return true;
+        }
+        return false;
+    }
+
+    async function waitGridIdle(maxMs = 6000, quietMs = 150) {
+        const start = Date.now();
+        let quietFrom = null;
+        while (Date.now() - start < maxMs) {
+            if (isLoadingUI()) {
+                quietFrom = null;
+            } else {
+                if (quietFrom === null) quietFrom = Date.now();
+                if (Date.now() - quietFrom >= quietMs) return true;
+            }
+            await sleep(50);
+        }
+        return true;
+    }
+
+    async function refreshPatientList() {
+        if (isRefreshingList) return false;
+        isRefreshingList = true;
+        try {
+            addLog('⟳ Làm mới danh sách bệnh nhân (#lammoi)...', 'info');
+            updateCurrentStep('Đang làm mới danh sách BN...');
+            const btnLamMoi = $('#lammoi');
+            if (!btnLamMoi.length) {
+                addLog('Không tìm thấy nút làm mới (#lammoi) trên trang.', 'warn');
+                return false;
+            }
+            if (btnLamMoi.prop('disabled')) {
+                addLog('Nút #lammoi đang bị vô hiệu hóa, bỏ qua làm mới.', 'warn');
+                return false;
+            }
+            btnLamMoi.click();
+            await sleep(300);
+            await waitGridIdle(6000, Math.max(150, config.speedDelay));
+            const totalRows = ($('#list1').jqGrid('getDataIDs') || []).length;
+            addLog(`✓ Đã làm mới danh sách (${totalRows} bệnh nhân trên lưới).`, 'info');
+            return true;
+        } catch (e) {
+            addLog(`Lỗi khi làm mới danh sách: ${e.message}`, 'warn');
+            return false;
+        } finally {
+            isRefreshingList = false;
         }
     }
 
@@ -1213,7 +1303,7 @@
 
         addLog('Tìm bệnh nhân ngẫu nhiên...', 'info');
         const target = pickRandomPatient();
-        if (!target) return false;
+        if (!target) return 'NO_PATIENT';
 
         const { rowId, data, mbn } = target;
         const hoTen = (data.TEN_BENH_NHAN || data.TEN_BENH_NHAN_HT || 'Bệnh nhân').replace(/<[^>]*>?/gm, '').trim();
@@ -1344,6 +1434,7 @@
         if (isRunning) return;
         isRunning = true;
         isPaused = false;
+        refreshRequested = false;
         updateUIState();
         addLog('🚀 BẮT ĐẦU VẬN HÀNH AUTO...', 'success');
 
@@ -1354,8 +1445,30 @@
             }
 
             try {
-                const ok = await processSinglePatient();
-                if (!ok) {
+                if (config.autoRefreshList || refreshRequested) {
+                    refreshRequested = false;
+                    await refreshPatientList();
+                    if (!isRunning) break;
+                    if (isPaused) continue;
+                }
+
+                const res = await processSinglePatient();
+                if (res === 'NO_PATIENT') {
+                    if (config.autoRefreshList || refreshRequested) {
+                        const waitMs = Math.max(500, parseInt(config.emptyWaitMs, 10) || 3000);
+                        addLog(`Không còn bệnh nhân chờ khám — chờ ${(waitMs / 1000).toFixed(1)}s rồi làm mới lại...`, 'info');
+                        updateCurrentStep(`Chờ làm mới DS (${(waitMs / 1000).toFixed(1)}s)...`);
+                        const stepMs = 150;
+                        for (let waited = 0; waited < waitMs && isRunning && !isPaused && !refreshRequested; waited += stepMs) {
+                            await sleep(stepMs);
+                        }
+                        continue;
+                    }
+                    addLog('Đã xử lý hết danh sách hiện tại (Tự làm mới đang TẮT). Dừng tiến trình.', 'warn');
+                    stopLoop();
+                    break;
+                }
+                if (!res) {
                     if (isPaused) {
                         addLog('Tiến trình tạm dừng do ca hiện tại chưa hoàn tất. Bạn có thể kiểm tra và bấm BẮT ĐẦU lại khi sẵn sàng.', 'info');
                     } else {
@@ -1372,6 +1485,7 @@
 
             await sleep(config.speedDelay * 2);
         }
+        refreshRequested = false;
     }
 
     function pauseLoop() {
@@ -1386,6 +1500,7 @@
     function stopLoop() {
         isRunning = false;
         isPaused = false;
+        refreshRequested = false;
         updateUIState();
         addLog('⏹ ĐÃ DỪNG TIẾN TRÌNH.', 'warn');
     }
@@ -1395,7 +1510,10 @@
         addLog('Khám 1 bệnh nhân...', 'info');
         updateCurrentStep('Đang khám 1 ca...');
         try {
-            await processSinglePatient();
+            const res = await processSinglePatient();
+            if (res === 'NO_PATIENT') {
+                addLog('Không còn bệnh nhân hợp lệ trong danh sách hiện tại.', 'warn');
+            }
         } catch (e) {
             addLog(`Lỗi: ${e.message}`, 'warn');
             cancelPatient();
@@ -1581,7 +1699,8 @@
             .auto-ksk-status-row:last-child { margin-bottom: 0; }
             .auto-ksk-status-highlight { font-weight: 600; color: #1e88e5; }
 
-            #auto-ksk-smartca-banner {
+            #auto-ksk-smartca-banner,
+            #auto-ksk-refresh-banner {
                 background: #f8fafc;
                 border: 1px solid #cbd5e1;
                 border-radius: 8px;
@@ -1591,7 +1710,27 @@
                 align-items: center;
                 justify-content: space-between;
                 box-sizing: border-box;
+                gap: 8px;
             }
+            .refresh-banner-actions {
+                display: inline-flex;
+                align-items: center;
+                gap: 6px;
+                flex-shrink: 0;
+            }
+            .ak-btn-refresh-now {
+                padding: 6px 10px;
+                font-size: 12px;
+                font-weight: 700;
+                border-radius: 20px;
+                cursor: pointer;
+                border: none;
+                background: #0288d1;
+                color: #fff;
+                transition: all 0.2s ease;
+            }
+            .ak-btn-refresh-now:hover { background: #01579b; }
+            .ak-btn-refresh-now:disabled { opacity: 0.5; cursor: not-allowed; }
             .smartca-banner-left {
                 display: flex;
                 align-items: center;
@@ -1733,6 +1872,10 @@
                     <span>Trạng thái Ký số:</span>
                     <span id="auto-ksk-sign-status-text" style="font-weight: 600; color: #2e7d32;">ĐANG BẬT</span>
                 </div>
+                <div class="auto-ksk-status-row">
+                    <span>Tự làm mới DS BN:</span>
+                    <span id="auto-ksk-refresh-status-text" style="font-weight: 600; color: #2e7d32;">ĐANG BẬT</span>
+                </div>
             </div>
 
             <div id="auto-ksk-smartca-banner">
@@ -1746,6 +1889,24 @@
                 <button id="ak-btn-toggle-sign" class="ak-btn-sign-toggle ak-sign-on" title="Nhấn để bật / tắt ký số SmartCA">
                     <span>🔐 ĐANG BẬT</span>
                 </button>
+            </div>
+
+            <div id="auto-ksk-refresh-banner">
+                <div class="smartca-banner-left">
+                    <span style="font-size: 18px;">🔄</span>
+                    <div>
+                        <div class="smartca-banner-title">LÀM MỚI DANH SÁCH BN</div>
+                        <div class="smartca-banner-sub" id="auto-ksk-refresh-desc">Tự động bấm #lammoi & chờ BN mới</div>
+                    </div>
+                </div>
+                <div class="refresh-banner-actions">
+                    <button id="ak-btn-refresh-now" class="ak-btn-refresh-now" title="Làm mới danh sách bệnh nhân (#lammoi)">
+                        ⟳
+                    </button>
+                    <button id="ak-btn-toggle-refresh" class="ak-btn-sign-toggle ak-sign-on" title="Nhấn để bật / tắt tự động làm mới danh sách bệnh nhân">
+                        <span>⟳ ĐANG BẬT</span>
+                    </button>
+                </div>
             </div>
 
             <div class="auto-ksk-nav-tabs">
@@ -1837,9 +1998,15 @@
             </div>
 
             <div class="auto-ksk-tab-content" id="tab-speed">
-                <div class="ak-form-group">
-                    <label class="ak-form-label">Độ trễ thao tác (ms):</label>
-                    <input type="number" id="ak-cfg-speed" class="ak-input" min="20" max="2000" step="10">
+                <div class="ak-grid-2">
+                    <div class="ak-form-group">
+                        <label class="ak-form-label">Độ trễ thao tác (ms):</label>
+                        <input type="number" id="ak-cfg-speed" class="ak-input" min="20" max="2000" step="10">
+                    </div>
+                    <div class="ak-form-group">
+                        <label class="ak-form-label">Chờ làm mới khi hết DS (ms):</label>
+                        <input type="number" id="ak-cfg-empty-wait" class="ak-input" min="500" max="30000" step="500">
+                    </div>
                 </div>
                 <div class="ak-form-group">
                     <label class="ak-form-label">Quản lý danh sách đã khám (Bộ nhớ tạm):</label>
@@ -1860,6 +2027,7 @@
         bindEvents(container);
         loadConfigToUI();
         setSigningEnabled(config.enableSign);
+        setAutoRefreshEnabled(config.autoRefreshList);
         updateStatCounters();
     }
 
@@ -1937,6 +2105,37 @@
             });
         }
 
+        const btnToggleRefresh = panel.querySelector('#ak-btn-toggle-refresh');
+        if (btnToggleRefresh) {
+            btnToggleRefresh.addEventListener('click', () => {
+                const nextState = !config.autoRefreshList;
+                setAutoRefreshEnabled(nextState);
+                addLog(`Tự động làm mới danh sách BN: ${nextState ? 'BẬT' : 'TẮT'}`, nextState ? 'info' : 'warn');
+            });
+        }
+
+        const btnRefreshNow = panel.querySelector('#ak-btn-refresh-now');
+        if (btnRefreshNow) {
+            btnRefreshNow.addEventListener('click', async () => {
+                if (isRunning && !isPaused) {
+                    refreshRequested = true;
+                    addLog('Đã yêu cầu cập nhật — sẽ làm mới danh sách sau khi xử lý xong ca hiện tại.', 'info');
+                    return;
+                }
+                if (isSigningInProgress()) {
+                    addLog('Đang trong tiến trình ký số, không thể làm mới danh sách lúc này!', 'warn');
+                    return;
+                }
+                btnRefreshNow.disabled = true;
+                try {
+                    await refreshPatientList();
+                } finally {
+                    btnRefreshNow.disabled = false;
+                    updateUIState();
+                }
+            });
+        }
+
         const resetStatsBtn = panel.querySelector('#ak-btn-reset-stats');
         if (resetStatsBtn) {
             resetStatsBtn.addEventListener('click', () => {
@@ -1995,6 +2194,7 @@
         bindNumber('#ak-female-w-min', 'femaleWeightMin');
 
         bindNumber('#ak-cfg-speed', 'speedDelay');
+        bindNumber('#ak-cfg-empty-wait', 'emptyWaitMs');
         bindText('#ak-cfg-mabs', 'maBacSi');
         bindText('#ak-cfg-tenbs', 'tenBacSi');
         bindText('#ak-cfg-lydo', 'lyDoKham');
@@ -2030,6 +2230,7 @@
         setVal('ak-female-w-min', config.femaleWeightMin);
 
         setVal('ak-cfg-speed', config.speedDelay);
+        setVal('ak-cfg-empty-wait', config.emptyWaitMs);
         setVal('ak-cfg-mabs', config.maBacSi);
         setVal('ak-cfg-tenbs', config.tenBacSi);
         setVal('ak-cfg-lydo', config.lyDoKham);
