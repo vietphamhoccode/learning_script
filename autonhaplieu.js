@@ -15,6 +15,7 @@
         autoRun: false,
         enableSign: true,
         autoRefreshList: true,
+        examMode: 'cho_kham', // 'cho_kham' -> ấn Khám (#kham), 'dang_kham' -> ấn Sửa (#sua)
         autoDisableOnLoginAlert: true,
         speedDelay: 40,
         emptyWaitMs: 3000,
@@ -257,6 +258,49 @@
                 statusText.style.color = '#64748b';
             }
         }
+    }
+
+    function setExamMode(mode) {
+        const isDangKham = mode === 'dang_kham';
+        config.examMode = isDangKham ? 'dang_kham' : 'cho_kham';
+        const btn = document.getElementById('ak-btn-toggle-exam-mode');
+        const desc = document.getElementById('auto-ksk-exam-mode-desc');
+        const statusText = document.getElementById('auto-ksk-exam-mode-status-text');
+
+        if (btn) {
+            if (isDangKham) {
+                btn.className = 'ak-btn-sign-toggle ak-mode-editing';
+                btn.innerHTML = '<span>✏️ ĐANG KHÁM</span>';
+                if (desc) desc.textContent = 'Đang chọn: Ấn nút Sửa (#sua)';
+            } else {
+                btn.className = 'ak-btn-sign-toggle ak-mode-waiting';
+                btn.innerHTML = '<span>🩺 CHỜ KHÁM</span>';
+                if (desc) desc.textContent = 'Đang chọn: Ấn nút Khám (#kham)';
+            }
+        }
+
+        if (statusText) {
+            if (isDangKham) {
+                statusText.textContent = 'ĐANG KHÁM (ấn Sửa)';
+                statusText.style.color = '#e65100';
+            } else {
+                statusText.textContent = 'CHỜ KHÁM (ấn Khám)';
+                statusText.style.color = '#1565c0';
+            }
+        }
+    }
+
+    function findEditButton() {
+        const selectors = ['#sua', '#suakham', '#btnSua'];
+        for (const sel of selectors) {
+            const $el = $(sel);
+            if ($el.length) return $el;
+        }
+        return $('button, input[type="button"], input[type="submit"]').filter(function () {
+            if (!$(this).is(':visible')) return false;
+            const label = (this.tagName === 'INPUT' ? $(this).val() : $(this).text() || '').trim().toLowerCase();
+            return label === 'sửa' || label === 'sua';
+        }).first();
     }
 
     function isLoadingUI() {
@@ -678,16 +722,17 @@
         if (!tab) return false;
         if (tab.classList.contains('smartca-ad-modal-content-tabs-header-active')) return true;
         const grid = document.querySelector('#smartca-ad-grid-thong-tin-phieu');
-        return (grid && grid.offsetParent !== null);
+        return (grid && grid.offsetParent !== null && window.getComputedStyle(grid).display !== 'none');
     }
 
     async function switchToTabKhac(timeout = 8000) {
         if (handleSmartCALoginDetected()) return false;
+        if (isTabKhacActive()) return true;
 
         await waitFor(() => {
             const l = document.querySelector('#smartca-loading');
             return !l || l.offsetParent === null || window.getComputedStyle(l).display === 'none';
-        }, 3000, 50);
+        }, 2000, 30);
 
         const tab = document.querySelector('#smartca-tab-item-khac');
         if (!tab) return false;
@@ -703,9 +748,9 @@
         const ok = await waitFor(() => {
             if (handleSmartCALoginDetected()) return false;
             return isTabKhacActive();
-        }, timeout, 50);
+        }, timeout, 30);
 
-        await sleep(200);
+        await sleep(50);
         return ok;
     }
 
@@ -719,12 +764,13 @@
         const exact = document.querySelector('div.smartca-ad-sign-button-scanner[data-id="XML_KSK_DINH_KY_TREN_18_TUOI"]') ||
             document.querySelector('[data-type="btn-ky-so"][data-id="XML_KSK_DINH_KY_TREN_18_TUOI"]') ||
             document.querySelector('div[data-id="XML_KSK_DINH_KY_TREN_18_TUOI"]');
-        if (exact) return exact;
+        if (exact && exact.offsetParent !== null) return exact;
 
         const list = Array.from(document.querySelectorAll('.smartca-ad-sign-button-scanner, div[data-type="btn-ky-so"]'));
         for (let el of list) {
+            if (el.offsetParent === null) continue;
             const id = (el.getAttribute('data-id') || '').toUpperCase();
-            if (id.includes('XML_KSK') || id.includes('KSK_DINH_KY')) return el;
+            if (id.includes('XML_KSK') || id.includes('KSK_DINH_KY') || (/KSK/i.test(id) && /18/.test(id))) return el;
         }
         return null;
     }
@@ -902,33 +948,24 @@
         const tabOk = await switchToTabKhac(8000);
         if (!tabOk) {
             addLog('Chưa kích hoạt được tab "Khác", thử lại...', 'warn');
-            await sleep(300);
-            await switchToTabKhac(5000);
+            await sleep(150);
+            await switchToTabKhac(4000);
         }
 
         if (handleSmartCALoginDetected()) return false;
 
-        addLog('Chờ hệ thống tải danh sách văn bản từ máy chủ...', 'info');
-        await waitFor(() => {
-            const l1 = document.querySelector('#smartca-loading');
-            const l2 = document.querySelector('#load_smartca-ad-grid-thong-tin-phieu');
-            const isL1 = l1 && l1.offsetParent !== null && window.getComputedStyle(l1).display !== 'none';
-            const isL2 = l2 && l2.offsetParent !== null && window.getComputedStyle(l2).display !== 'none';
-            return !isL1 && !isL2;
-        }, 8000, 100);
-
-        await sleep(300);
-
         addLog('Đang chờ phát hiện nút ký số XML_KSK...', 'info');
         let btnSignXML = await waitFor(() => {
             if (handleSmartCALoginDetected()) return null;
-            return findSignButtonXML();
-        }, 15000, 100);
+            const btn = findSignButtonXML();
+            if (btn) return btn;
+            return false;
+        }, 12000, 30);
 
         if (!btnSignXML) {
             if (isAlreadySignedXML()) {
                 addLog('Văn bản XML_KSK đã được ký số thành công trước đó.', 'success');
-                await sleep(300);
+                await sleep(150);
                 closeSmartCAModals();
                 return true;
             }
@@ -939,7 +976,7 @@
                 if (window.jQuery) $(tabKhac).trigger('click');
                 tabKhac.click();
             }
-            await sleep(400);
+            await sleep(150);
 
             await waitFor(() => {
                 const l1 = document.querySelector('#smartca-loading');
@@ -947,18 +984,18 @@
                 const isL1 = l1 && l1.offsetParent !== null && window.getComputedStyle(l1).display !== 'none';
                 const isL2 = l2 && l2.offsetParent !== null && window.getComputedStyle(l2).display !== 'none';
                 return !isL1 && !isL2;
-            }, 8000, 100);
+            }, 6000, 30);
 
             btnSignXML = await waitFor(() => {
                 if (handleSmartCALoginDetected()) return null;
                 return findSignButtonXML();
-            }, 10000, 100);
+            }, 10000, 30);
         }
 
         if (!btnSignXML) {
             if (isAlreadySignedXML()) {
                 addLog('Văn bản XML_KSK đã có chữ ký số.', 'success');
-                await sleep(300);
+                await sleep(150);
                 closeSmartCAModals();
                 return true;
             }
@@ -969,8 +1006,8 @@
         }
 
         addLog('Đã phát hiện nút ký số XML_KSK! Chuẩn bị thao tác ký...', 'success');
-        btnSignXML.scrollIntoView({ behavior: 'smooth', block: 'center' });
-        await sleep(400);
+        btnSignXML.scrollIntoView({ block: 'nearest' });
+        await sleep(50);
 
         if (window.jQuery) {
             $(btnSignXML).trigger('click');
@@ -985,7 +1022,7 @@
             const dialog = sel?.closest('.ui-dialog');
             const isVisible = dialog ? (dialog.offsetParent !== null && window.getComputedStyle(dialog).display !== 'none') : (sel && sel.offsetParent !== null);
             return (sel && btn && isVisible) ? { sel, btn } : false;
-        }, 12000, 100);
+        }, 12000, 30);
 
         if (!roleModal) {
             addLog('Không xuất hiện bảng chọn vai trò ký.', 'warn');
@@ -993,7 +1030,7 @@
             return false;
         }
 
-        await sleep(500);
+        await sleep(100);
 
         const oldAlert = document.getElementById('smartca-alert');
         if (oldAlert) {
@@ -1314,19 +1351,34 @@
 
         $('#list1').jqGrid('setSelection', rowId, true);
         const rowDom = document.getElementById(rowId);
-        if (rowDom) rowDom.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        if (rowDom) rowDom.scrollIntoView({ block: 'nearest' });
+
+        const isDangKham = config.examMode === 'dang_kham';
 
         await waitFor(() => {
             const mayte = $('#mayte').val();
-            return (mayte && mayte.trim() === mbn) || ($('#kham').length && !$('#kham').prop('disabled'));
+            const actionBtn = isDangKham ? findEditButton() : $('#kham');
+            return (mayte && mayte.trim() === mbn) || (actionBtn.length && !actionBtn.prop('disabled'));
         }, 2000, 30);
 
-        const btnKham = $('#kham');
-        if (btnKham.length && !btnKham.prop('disabled')) {
-            addLog('Nhấn nút "Khám"...', 'info');
-            btnKham.click();
-            autoDismissPopups();
-            await sleep(config.speedDelay);
+        if (isDangKham) {
+            const btnSua = findEditButton();
+            if (btnSua.length && !btnSua.prop('disabled')) {
+                addLog('Nhấn nút "Sửa" (chế độ Đang khám)...', 'info');
+                btnSua.click();
+                autoDismissPopups();
+                await sleep(config.speedDelay);
+            } else if (!btnSua.length) {
+                addLog('Không tìm thấy nút "Sửa" trên giao diện!', 'warn');
+            }
+        } else {
+            const btnKham = $('#kham');
+            if (btnKham.length && !btnKham.prop('disabled')) {
+                addLog('Nhấn nút "Khám" (chế độ Chờ khám)...', 'info');
+                btnKham.click();
+                autoDismissPopups();
+                await sleep(config.speedDelay);
+            }
         }
 
         await waitFor(() => !$('#mach').prop('disabled') || !$('#luu').prop('disabled'), 2000, 30);
@@ -1445,7 +1497,7 @@
             }
 
             try {
-                if (config.autoRefreshList || refreshRequested) {
+                if (refreshRequested) {
                     refreshRequested = false;
                     await refreshPatientList();
                     if (!isRunning) break;
@@ -1456,12 +1508,14 @@
                 if (res === 'NO_PATIENT') {
                     if (config.autoRefreshList || refreshRequested) {
                         const waitMs = Math.max(500, parseInt(config.emptyWaitMs, 10) || 3000);
-                        addLog(`Không còn bệnh nhân chờ khám — chờ ${(waitMs / 1000).toFixed(1)}s rồi làm mới lại...`, 'info');
+                        addLog(`Không còn bệnh nhân trên danh sách — chờ ${(waitMs / 1000).toFixed(1)}s rồi làm mới lại...`, 'info');
                         updateCurrentStep(`Chờ làm mới DS (${(waitMs / 1000).toFixed(1)}s)...`);
                         const stepMs = 150;
                         for (let waited = 0; waited < waitMs && isRunning && !isPaused && !refreshRequested; waited += stepMs) {
                             await sleep(stepMs);
                         }
+                        refreshRequested = false;
+                        await refreshPatientList();
                         continue;
                     }
                     addLog('Đã xử lý hết danh sách hiện tại (Tự làm mới đang TẮT). Dừng tiến trình.', 'warn');
@@ -1700,7 +1754,8 @@
             .auto-ksk-status-highlight { font-weight: 600; color: #1e88e5; }
 
             #auto-ksk-smartca-banner,
-            #auto-ksk-refresh-banner {
+            #auto-ksk-refresh-banner,
+            #auto-ksk-exam-mode-banner {
                 background: #f8fafc;
                 border: 1px solid #cbd5e1;
                 border-radius: 8px;
@@ -1771,6 +1826,18 @@
                 box-shadow: 0 1px 3px rgba(0,0,0,0.05);
             }
             .ak-sign-off:hover { background: #cbd5e1; color: #334155; }
+            .ak-mode-waiting {
+                background: #1565c0;
+                color: #fff;
+                box-shadow: 0 2px 6px rgba(21,101,192,0.3);
+            }
+            .ak-mode-waiting:hover { background: #0d47a1; }
+            .ak-mode-editing {
+                background: #e65100;
+                color: #fff;
+                box-shadow: 0 2px 6px rgba(230,81,0,0.3);
+            }
+            .ak-mode-editing:hover { background: #bf360c; }
 
             .auto-ksk-nav-tabs {
                 display: flex;
@@ -1876,6 +1943,23 @@
                     <span>Tự làm mới DS BN:</span>
                     <span id="auto-ksk-refresh-status-text" style="font-weight: 600; color: #2e7d32;">ĐANG BẬT</span>
                 </div>
+                <div class="auto-ksk-status-row">
+                    <span>Chế độ khám:</span>
+                    <span id="auto-ksk-exam-mode-status-text" style="font-weight: 600; color: #1565c0;">CHỜ KHÁM (ấn Khám)</span>
+                </div>
+            </div>
+
+            <div id="auto-ksk-exam-mode-banner">
+                <div class="smartca-banner-left">
+                    <span style="font-size: 18px;">🩺</span>
+                    <div>
+                        <div class="smartca-banner-title">CHẾ ĐỘ KHÁM</div>
+                        <div class="smartca-banner-sub" id="auto-ksk-exam-mode-desc">Đang chọn: Ấn nút Khám (#kham)</div>
+                    </div>
+                </div>
+                <button id="ak-btn-toggle-exam-mode" class="ak-btn-sign-toggle ak-mode-waiting" title="Nhấn để chuyển giữa Chờ khám (ấn Khám) và Đang khám (ấn Sửa)">
+                    <span>🩺 CHỜ KHÁM</span>
+                </button>
             </div>
 
             <div id="auto-ksk-smartca-banner">
@@ -2028,6 +2112,7 @@
         loadConfigToUI();
         setSigningEnabled(config.enableSign);
         setAutoRefreshEnabled(config.autoRefreshList);
+        setExamMode(config.examMode);
         updateStatCounters();
     }
 
@@ -2111,6 +2196,18 @@
                 const nextState = !config.autoRefreshList;
                 setAutoRefreshEnabled(nextState);
                 addLog(`Tự động làm mới danh sách BN: ${nextState ? 'BẬT' : 'TẮT'}`, nextState ? 'info' : 'warn');
+            });
+        }
+
+        const btnToggleExamMode = panel.querySelector('#ak-btn-toggle-exam-mode');
+        if (btnToggleExamMode) {
+            btnToggleExamMode.addEventListener('click', () => {
+                const nextMode = config.examMode === 'dang_kham' ? 'cho_kham' : 'dang_kham';
+                setExamMode(nextMode);
+                addLog(
+                    `Chế độ khám: ${nextMode === 'dang_kham' ? 'ĐANG KHÁM (ấn nút Sửa)' : 'CHỜ KHÁM (ấn nút Khám)'}`,
+                    'info'
+                );
             });
         }
 
