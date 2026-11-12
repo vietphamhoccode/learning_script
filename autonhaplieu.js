@@ -707,51 +707,73 @@
         const ok = await waitFor(() => {
             if (handleSmartCALoginDetected()) return false;
             return isSmartCAModalOpen();
-        }, timeout, 50);
+        }, timeout, 30);
 
         if (ok) {
-            await waitFor(() => document.querySelector('#smartca-tab-item-khac'), 5000, 50);
-            await sleep(250);
+            await waitFor(() => findTabKhac() || isSmartCAModalOpen(), 3000, 30);
         }
 
         return ok;
     }
 
+    function findTabKhac() {
+        const exact = document.querySelector('#smartca-tab-item-khac');
+        if (exact) return exact;
+        const items = document.querySelectorAll('.smartca-ad-modal-content-tabs-header-item');
+        for (let item of items) {
+            const text = (item.textContent || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+            if (text.includes('khac')) return item;
+        }
+        return null;
+    }
+
     function isTabKhacActive() {
-        const tab = document.querySelector('#smartca-tab-item-khac');
+        const tab = findTabKhac();
         if (!tab) return false;
         if (tab.classList.contains('smartca-ad-modal-content-tabs-header-active')) return true;
+        try {
+            if (typeof currentTabId !== 'undefined' && currentTabId === 'smartca-tab-item-khac') return true;
+        } catch (e) {}
         const grid = document.querySelector('#smartca-ad-grid-thong-tin-phieu');
         return (grid && grid.offsetParent !== null && window.getComputedStyle(grid).display !== 'none');
     }
 
-    async function switchToTabKhac(timeout = 8000) {
+    async function switchToTabKhac(timeout = 6000) {
         if (handleSmartCALoginDetected()) return false;
         if (isTabKhacActive()) return true;
 
-        await waitFor(() => {
-            const l = document.querySelector('#smartca-loading');
-            return !l || l.offsetParent === null || window.getComputedStyle(l).display === 'none';
-        }, 2000, 30);
-
-        const tab = document.querySelector('#smartca-tab-item-khac');
-        if (!tab) return false;
-
-        tab.style.pointerEvents = 'auto';
-        if (window.jQuery) {
-            $('#smartca-tab-item-khac').trigger('click');
-        }
-        tab.click();
-        const span = tab.querySelector('span');
-        if (span) span.click();
-
-        const ok = await waitFor(() => {
+        const t0 = Date.now();
+        while (Date.now() - t0 < timeout) {
             if (handleSmartCALoginDetected()) return false;
-            return isTabKhacActive();
-        }, timeout, 30);
 
-        await sleep(50);
-        return ok;
+            const tab = findTabKhac();
+            if (tab) {
+                // Mở khóa pointer-events cho tất cả các tab để kích hoạt tức thì không bị chặn bởi loading overlay
+                document.querySelectorAll('.smartca-ad-modal-content-tabs-header-item').forEach(el => {
+                    el.style.pointerEvents = 'auto';
+                });
+                tab.style.pointerEvents = 'auto';
+
+                if (window.jQuery) {
+                    $(tab).trigger('click');
+                }
+                tab.click();
+                const span = tab.querySelector('span');
+                if (span) span.click();
+
+                if (isTabKhacActive()) return true;
+
+                // Thăm dò phản hồi siêu nhanh 20ms
+                const ok = await waitFor(() => {
+                    if (handleSmartCALoginDetected()) return false;
+                    return isTabKhacActive();
+                }, 350, 20);
+                if (ok) return true;
+            } else {
+                await sleep(30);
+            }
+        }
+        return isTabKhacActive();
     }
 
     function isAlreadySignedXML() {
@@ -942,14 +964,12 @@
         }
 
         if (handleSmartCALoginDetected()) return false;
-        await sleep(300);
 
         addLog('Chuyển sang tab "Khác"...', 'info');
-        const tabOk = await switchToTabKhac(8000);
+        const tabOk = await switchToTabKhac(6000);
         if (!tabOk) {
             addLog('Chưa kích hoạt được tab "Khác", thử lại...', 'warn');
-            await sleep(150);
-            await switchToTabKhac(4000);
+            await switchToTabKhac(3000);
         }
 
         if (handleSmartCALoginDetected()) return false;
