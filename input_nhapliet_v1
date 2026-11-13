@@ -1,0 +1,1861 @@
+/**
+ * KSK auto — dán 1 lần vào Console → hiện panel góc phải.
+ * Hoặc bookmark: javascript:(function(){var s=document.createElement('script');s.src='...';})()
+ */
+(function () {
+  if (!window.jQuery) {
+    alert("Cần jQuery trên trang HIS.");
+    return;
+  }
+  // reload nếu đã inject lần trước
+  if (window.KSK_AUTO && window.KSK_AUTO._destroy) {
+    try {
+      window.KSK_AUTO._destroy();
+    } catch (e) {}
+  }
+
+  var $ = window.jQuery;
+  
+  // CONFIG — có thể thay đổi qua menu
+  var CFG = {
+    // Thông tin bác sĩ & nội dung
+    BS: "1327430",
+    LY_DO: "Kiểm tra khám sàng lọc",
+    TUAN_HOAN: "Chưa phát hiện bệnh lý",
+    
+    // Chế độ xử lý
+    API_MODE: false,  // LUÔN TẮT - chỉ dùng UI mode cho ổn định
+    
+    // Tốc độ xử lý (ms)
+    QUIET: 150,        // chờ UI ổn định (giảm từ 250 → 150)
+    POLL: 50,          // kiểm tra trạng thái (giảm từ 80 → 50)
+    
+    // Timeout (ms)
+    KYSO_WAIT_MS: 30000,      // chờ xác thực SmartCA (giảm từ 45s → 30s)
+    KYSO_GRID_WAIT_MS: 4000,  // chờ nút ký xuất hiện (giảm từ 6s → 4s)
+    EMPTY_WAIT_MS: 3000,      // list trống chờ refresh (giảm từ 4s → 3s)
+    
+    // Sinh hiệu random (nam)
+    NAM_HEIGHT_MIN: 160,
+    NAM_HEIGHT_MAX: 175,
+    NAM_HEIGHT_60_MIN: 155,
+    NAM_HEIGHT_60_MAX: 170,
+    
+    // Sinh hiệu random (nữ)
+    NU_HEIGHT_MIN: 150,
+    NU_HEIGHT_MAX: 165,
+    NU_HEIGHT_60_MIN: 145,
+    NU_HEIGHT_60_MAX: 160,
+    
+    // BMI & sinh hiệu khác
+    BMI_MIN: 20.0,
+    BMI_MAX: 24.0,
+    MACH_MIN: 65,
+    MACH_MAX: 90,
+    MACH_60_MIN: 60,
+    MACH_60_MAX: 85,
+    NHIPTHO_MIN: 16,
+    NHIPTHO_MAX: 20,
+    NHIETDO: 37,
+    HUYETAP_MIN: 100,
+    HUYETAP_MAX: 128,
+    HUYETAP_60_MIN: 120,
+    HUYETAP_60_MAX: 140,
+  };
+  
+  // lâm sàng đủ 18 — bỏ Sản phụ khoa
+  var LS_MUC = [
+    { nd: "tt32_mau2tuanhoan", bs: "tt32_mau2bacsituanhoan" },
+    { nd: "tt32_mau2noitiet", bs: "tt32_mau2bacsinoitiet" },
+    { nd: "tt32_mau2hohap", bs: "tt32_mau2bacsihohap" },
+    { nd: "tt32_mau2tieuhoa", bs: "tt32_mau2bacsitieuhoa" },
+    { nd: "tt32_mau2tietnieu", bs: "tt32_mau2bacsitietnieu" },
+    { nd: "tt32_mau2coxuongkhop", bs: "tt32_mau2bacsixuongkhop" },
+    { nd: "tt32_mau2thankinh", bs: "tt32_mau2bacsithankinh" },
+    { nd: "tt32_mau2tamthan", bs: "tt32_mau2bacsitamthan" },
+    { nd: "tt32_mau2ngoaikhoa", bs: "tt32_mau2bacsingoaikhoa" },
+    { nd: "tt32_mau2ngkdalieu", bs: "tt32_mau2bacsingoaikhoa" }, // da liễu chung BS ngoại
+    { nd: "tt32_mau2benhvemat", bs: "tt32_mau2bacsimat" },
+    { nd: "tt32_mau2benhvetai", bs: "tt32_mau2bacsitaimuihong" },
+    { nd: "tt32_mau2benhverang", bs: "tt32_mau2bacsiranghammat" },
+  ];
+  var STOP = true;
+  var RUNNING = false;
+  var CONTINUOUS = false;
+  var REFRESH_REQUESTED = false;
+  var DONE = new Set(); // grid row id đã xử lý
+  var BN_DONE = new Set(); // MA_BENH_NHAN đã xử lý (không lặp khi refresh)
+  var KYSO_DONE = {}; // mayte -> { CKS_NGUOI_KET_LUAN:1, CKS_BENH_VIEN:1 }
+  var STEP = 0;
+  var LOGS = [];
+  var ENABLE_KYSO = true;
+  var ENABLE_AUTO_REFRESH = true;
+
+  function bnMayte() {
+    return ($("#mayte").val() || "").trim();
+  }
+
+  function mayteOfRow(id) {
+    try {
+      var r = $("#list1").jqGrid("getRowData", id);
+      return r && r.MA_BENH_NHAN ? String(r.MA_BENH_NHAN).trim() : "";
+    } catch (e) {
+      return "";
+    }
+  }
+
+  function kysoDaKy(mayte, role) {
+    return !!(mayte && KYSO_DONE[mayte] && KYSO_DONE[mayte][role]);
+  }
+
+  function kysoDu2(mayte) {
+    return (
+      kysoDaKy(mayte, "CKS_NGUOI_KET_LUAN") &&
+      kysoDaKy(mayte, "CKS_BENH_VIEN")
+    );
+  }
+
+  function markKyso(mayte, role) {
+    if (!mayte) return;
+    if (!KYSO_DONE[mayte]) KYSO_DONE[mayte] = {};
+    KYSO_DONE[mayte][role] = 1;
+  }
+
+  function kySoEnabled() {
+    var $toggle = $("#ksk_auto_kyso");
+    if ($toggle.length) ENABLE_KYSO = $toggle.is(":checked");
+    return ENABLE_KYSO;
+  }
+
+  function autoRefreshEnabled() {
+    var $toggle = $("#ksk_auto_refresh");
+    if ($toggle.length) ENABLE_AUTO_REFRESH = $toggle.is(":checked");
+    return ENABLE_AUTO_REFRESH;
+  }
+
+  function sleep(ms) {
+    return new Promise(function (r) {
+      setTimeout(r, ms);
+    });
+  }
+
+  function rnd(a, b) {
+    return Math.floor(Math.random() * (b - a + 1)) + a;
+  }
+  
+  function rndFloat(a, b) {
+    return Math.random() * (b - a) + a;
+  }
+
+  function setStatus(s) {
+    var el = document.getElementById("ksk_auto_status");
+    if (el) el.textContent = s;
+  }
+
+  function pushLog(line) {
+    LOGS.push(line);
+    if (LOGS.length > 40) LOGS.shift();
+    var box = document.getElementById("ksk_auto_log");
+    if (box) {
+      box.textContent = LOGS.slice(-12).join("\n");
+      box.scrollTop = box.scrollHeight;
+    }
+  }
+
+  function log(msg) {
+    STEP++;
+    var t = new Date().toLocaleTimeString("vi-VN");
+    var line = "#" + STEP + " " + t + " " + msg;
+    console.log("[KSK_AUTO] " + line);
+    pushLog(line);
+    setStatus(msg);
+  }
+
+  function warn(msg) {
+    STEP++;
+    var line = "#" + STEP + " ⚠ " + msg;
+    console.warn("[KSK_AUTO] " + line);
+    pushLog(line);
+    setStatus(msg);
+  }
+
+  function isConfirmBtnText(t) {
+    t = String(t || "").trim();
+    return /^(OK|Đồng ý|Có|Tiếp tục|Xác nhận|Confirm|Yes)$/i.test(t) ||
+      /^xác\s*nhận$/i.test(t);
+  }
+
+  async function clickDongY(maxMs) {
+    maxMs = maxMs || 2500;
+    var t0 = Date.now();
+    var n = 0;
+    while (Date.now() - t0 < maxMs) {
+      var hit = false;
+      $(
+        ".ui-dialog-buttonset button, button.ui-button, #popup_ok, .jAlert button, .smartca-ad-alert button, .swal2-confirm, button.confirm"
+      ).each(function () {
+        if (!$(this).is(":visible")) return;
+        var t = ($(this).text() || $(this).val() || "").trim();
+        if (isConfirmBtnText(t)) {
+          $(this).trigger("click");
+          hit = true;
+          n++;
+        }
+      });
+      if ($("#popup_ok").is(":visible")) {
+        $("#popup_ok").trigger("click");
+        hit = true;
+        n++;
+      }
+      if (!hit) break;
+      await sleep(CFG.POLL);
+    }
+    if (n) log("bấm Xác nhận/Đồng ý ×" + n);
+    return n;
+  }
+
+  // Chờ #smartca-alert → bấm Xác nhận (poll nhanh)
+  async function confirmAfterSign(label, maxMs) {
+    maxMs = maxMs || CFG.KYSO_WAIT_MS;
+    log("⏳ chờ #smartca-alert «" + label + "»…");
+    var t0 = Date.now();
+    while (Date.now() - t0 < maxMs) {
+      if (STOP) return false;
+      setStatus(
+        "Xác nhận «" + label + "»… " + Math.round((Date.now() - t0) / 1000) + "s"
+      );
+      var $alert = $("#smartca-alert:visible");
+      if ($alert.length) {
+        var $ok = $alert.find(".smartca-alert-button-confirm:visible").first();
+        if ($ok.length) {
+          var txt = ($alert.find(".smartca-alert-content").text() || "").trim();
+          $ok[0].click();
+          log("✓ Xác nhận «" + label + "»: " + txt.slice(0, 60));
+          await sleep(200);
+          return true;
+        }
+      }
+      await clickDongY(150);
+      await sleep(CFG.POLL);
+    }
+    warn("timeout xác nhận «" + label + "»");
+    return false;
+  }
+
+  function haDuoiTheoTren(tren) {
+    // 100 → /60 | <110 → /70 | >=120 → /80 | 110–119 → /70
+    if (tren <= 100) return 60;
+    if (tren < 110) return 70;
+    if (tren >= 120) return 80;
+    return 70;
+  }
+
+  function vitals(age, isNam) {
+    var h = isNam 
+      ? rnd(age >= 60 ? CFG.NAM_HEIGHT_60_MIN : CFG.NAM_HEIGHT_MIN, 
+            age >= 60 ? CFG.NAM_HEIGHT_60_MAX : CFG.NAM_HEIGHT_MAX)
+      : rnd(age >= 60 ? CFG.NU_HEIGHT_60_MIN : CFG.NU_HEIGHT_MIN,
+            age >= 60 ? CFG.NU_HEIGHT_60_MAX : CFG.NU_HEIGHT_MAX);
+    var bmi = rndFloat(CFG.BMI_MIN, CFG.BMI_MAX);
+    var w = Math.round((bmi * h * h) / 10000);
+    var tren = age >= 60 
+      ? rnd(CFG.HUYETAP_60_MIN, CFG.HUYETAP_60_MAX)
+      : rnd(CFG.HUYETAP_MIN, CFG.HUYETAP_MAX);
+    return {
+      mach: age >= 60 
+        ? rnd(CFG.MACH_60_MIN, CFG.MACH_60_MAX)
+        : rnd(CFG.MACH_MIN, CFG.MACH_MAX),
+      nhiptho: rnd(CFG.NHIPTHO_MIN, CFG.NHIPTHO_MAX),
+      chieucao: h,
+      cannang: w,
+      nhietdo: CFG.NHIETDO,
+      huyetaptren: tren,
+      huyetapduoi: haDuoiTheoTren(tren),
+    };
+  }
+
+  function doiTuongTheoTuoi(age) {
+    if (age > 60) return "1";
+    if (age < 22) return "11";
+    if (age >= 22 && age <= 60) return "13";
+    return "16";
+  }
+
+  function setVal(id, v) {
+    var $el = $("#" + id);
+    if (!$el.length) return;
+    $el.val(v).trigger("change").trigger("input");
+  }
+
+  function setChosen(id, v) {
+    var $el = $("#" + id);
+    if (!$el.length) return false;
+    var el = $el[0];
+    if ($el.find('option[value="' + v + '"]').length) {
+      $el.val(v);
+    } else {
+      // fallback: chọn option chứa mã BS
+      var hit = false;
+      $el.find("option").each(function () {
+        if (String(this.value) === String(v) || String(this.value).indexOf(v) >= 0) {
+          this.selected = true;
+          hit = true;
+          return false;
+        }
+      });
+      if (!hit) {
+        warn("không có option BS=" + v + " trong #" + id);
+        return false;
+      }
+    }
+    try {
+      el.dispatchEvent(new Event("change", { bubbles: true }));
+    } catch (e) {}
+    $el.trigger("chosen:updated").trigger("change");
+    return String($el.val()) === String(v) || String($el.val()).indexOf(v) >= 0;
+  }
+
+  function fillSinhHieu(v) {
+    log(
+      "sinh hiệu M" +
+        v.mach +
+        " NT" +
+        v.nhiptho +
+        " " +
+        v.chieucao +
+        "cm " +
+        v.cannang +
+        "kg HA" +
+        v.huyetaptren +
+        "/" +
+        v.huyetapduoi
+    );
+    setVal("mach", v.mach);
+    setVal("nhiptho", v.nhiptho);
+    setVal("chieucao", v.chieucao);
+    setVal("cannang", v.cannang);
+    setVal("nhietdo", v.nhietdo);
+    setVal("huyetaptren", v.huyetaptren);
+    setVal("huyetapduoi", v.huyetapduoi);
+  }
+
+  // bỏ dấu + lower để bắt Long Châu / LONG CHÂU / long chau…
+  function stripVn(s) {
+    return String(s || "")
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .toLowerCase();
+  }
+
+  function hasLongChau(s) {
+    return /long\s*chau/.test(stripVn(s));
+  }
+
+  function patchDiaChi() {
+    var $d = $("#tt32_mau2kskdiachi");
+    var cur = ($d.val() || "").trim();
+    if (!hasLongChau(cur)) {
+      $d.val((cur ? cur + ", " : "") + "P. Long Châu").trigger("change");
+      log("chèn P. Long Châu");
+    }
+  }
+
+  // 12 số OK; 11 số + bắt đầu ≠ 0 → thêm 0 đầu; còn lại → null (Hủy)
+  function fixCmnd(raw) {
+    var s = String(raw || "").replace(/\s+/g, "").trim();
+    if (/^\d{12}$/.test(s)) return s;
+    if (/^\d{11}$/.test(s) && s.charAt(0) !== "0") return "0" + s;
+    return null;
+  }
+
+  function applyCmndOrFail() {
+    var $el = $("#tt32_mau2ksksocmnd");
+    if (!$el.length) $el = $("#socmnd");
+    var raw = ($el.val() || "").trim();
+    var fixed = fixCmnd(raw);
+    if (!fixed) {
+      warn("CCCD/CMND không hợp lệ («" + raw + "» len=" + raw.length + ") → Hủy");
+      return false;
+    }
+    if (fixed !== raw) {
+      log("CCCD pad 0 đầu: " + raw + " → " + fixed);
+      $el.val(fixed).trigger("change");
+    } else {
+      log("CCCD OK: " + fixed);
+    }
+    return true;
+  }
+
+  function closeChosenDrops() {
+    try {
+      $(".chosen-container")
+        .removeClass("chosen-with-drop chosen-container-active");
+      $(".chosen-drop").hide();
+    } catch (e) {}
+  }
+
+  function fillLamSangAll() {
+    log("→ lâm sàng ALL (trừ Sản phụ khoa) + chọn BS");
+    for (var i = 0; i < LS_MUC.length; i++) {
+      var m = LS_MUC[i];
+      setVal(m.nd, CFG.TUAN_HOAN);
+      if (m.bs) setChosen(m.bs, CFG.BS);
+    }
+    if ($("#tt32_mau2bacsidalieu").length) setChosen("tt32_mau2bacsidalieu", CFG.BS);
+    setVal("tt32_mau2sanphukhoa", "");
+    setChosen("tt32_mau2bacsiphukhoa", "0");
+    try {
+      $("#tt32_mau2ksk-tab3 select").trigger("chosen:updated");
+    } catch (e) {}
+    closeChosenDrops();
+  }
+
+  // Thiếu nội dung / bác sĩ (0 hoặc rỗng) → list id
+  function lamSangMissing() {
+    var miss = [];
+    for (var i = 0; i < LS_MUC.length; i++) {
+      var m = LS_MUC[i];
+      var nd = ($("#" + m.nd).val() || "").trim();
+      if (!nd) miss.push(m.nd);
+      if (m.bs) {
+        var bv = String($("#" + m.bs).val() || "");
+        if (!bv || bv === "0") miss.push(m.bs);
+      }
+    }
+    return miss;
+  }
+
+  async function fillLamSangVerified() {
+    var t0 = Date.now();
+    while (Date.now() - t0 < 4000) {
+      if ($("#tt32_mau2tuanhoan").length) break;
+      await sleep(100);
+    }
+    if (!$("#tt32_mau2tuanhoan").length) {
+      warn("không thấy #tt32_mau2tuanhoan — tab lâm sàng chưa sẵn");
+      return false;
+    }
+    for (var attempt = 1; attempt <= 4; attempt++) {
+      fillLamSangAll();
+      await sleep(180);
+      var miss = lamSangMissing();
+      if (!miss.length) {
+        closeChosenDrops();
+        log(
+          "✓ lâm sàng đủ — tuần hoàn=«" +
+            ($("#tt32_mau2tuanhoan").val() || "").slice(0, 40) +
+            "» BS=" +
+            $("#tt32_mau2bacsituanhoan").val()
+        );
+        return true;
+      }
+      warn(
+        "lâm sàng thiếu lần " +
+          attempt +
+          ": " +
+          miss.slice(0, 6).join(", ") +
+          (miss.length > 6 ? "…" : "")
+      );
+      // load AJAX có thể vừa ghi đè — chờ rồi điền lại
+      await sleep(350);
+      await waitIdle(2000, 150);
+    }
+    return false;
+  }
+
+  async function waitLuuKskOk(maxMs) {
+    maxMs = maxMs || 15000;
+    log("⏳ chờ Lưu KSK thành công…");
+    var t0 = Date.now();
+    while (Date.now() - t0 < maxMs) {
+      if (STOP) return false;
+      var txt = stripVn(
+        (
+          $("#popup_message:visible").text() ||
+          $(".jAlert:visible").text() ||
+          $("#popup_container:visible").text() ||
+          ""
+        ).trim()
+      );
+      if (/da\s*cap\s*nhat|luu\s*thanh\s*cong|thanh\s*cong/.test(txt)) {
+        await clickDongY(1500);
+        log("✓ Lưu KSK OK");
+        return true;
+      }
+      // lỗi quy trình — đừng ký
+      if (/vui\s*long\s*thuc\s*hien\s*kham|khong\s*the|that\s*bai/.test(txt)) {
+        warn("Lưu KSK báo lỗi: " + txt.slice(0, 80));
+        await clickDongY(1500);
+        return false;
+      }
+      await clickDongY(200);
+      await sleep(200);
+    }
+    warn("timeout chờ «Đã cập nhật» sau Lưu");
+    return false;
+  }
+
+  // Chỉ overlay thật — KHÔNG dùng $.active (HIS hay giữ AJAX → kẹt mãi)
+  function isLoadingUi() {
+    if ($(".blockUI").filter(":visible").length) return true;
+    if ($("#load_list1").is(":visible")) return true;
+    var busy = false;
+    $(".loading").each(function () {
+      if ($(this).is(":visible") && $(this).css("display") !== "none") busy = true;
+    });
+    return busy;
+  }
+
+  async function waitIdle(maxMs, quietMs, label) {
+    maxMs = maxMs || 10000;
+    quietMs = quietMs == null ? CFG.QUIET : quietMs;
+    if (isLoadingUi()) log("đang nạp…" + (label ? " " + label : ""));
+    var t0 = Date.now();
+    var quietFrom = null;
+    while (Date.now() - t0 < maxMs) {
+      if (STOP && label !== "force") return false;
+      if (isLoadingUi()) quietFrom = null;
+      else {
+        if (quietFrom == null) quietFrom = Date.now();
+        if (Date.now() - quietFrom >= quietMs) return true;
+      }
+      await sleep(CFG.POLL);
+    }
+    return true; // hết giờ → làm tiếp, không kẹt
+  }
+
+  async function guardReady(label) {
+    if (!isLoadingUi()) return true;
+    log("chờ hết nạp: " + label);
+    await waitIdle(8000, CFG.QUIET, label);
+    return true;
+  }
+
+  async function waitBnReady(ms) {
+    log("chờ load BN…");
+    var t0 = Date.now();
+    while (Date.now() - t0 < (ms || 15000)) {
+      if (STOP) return false;
+      var hoten = ($("#hoten").val() || "").trim();
+      var tuoi = ($("#tuoi").val() || "").trim();
+      var mayte = ($("#mayte").val() || "").trim();
+      if (hoten && tuoi !== "" && mayte && !isLoadingUi()) {
+        await sleep(CFG.QUIET);
+        if (
+          ($("#hoten").val() || "").trim() === hoten &&
+          ($("#tuoi").val() || "").trim() === tuoi
+        ) {
+          log("BN OK: " + hoten + " tuổi " + tuoi);
+          return true;
+        }
+      }
+      await sleep(CFG.POLL);
+    }
+    warn("BN chưa load đủ");
+    return false;
+  }
+
+  async function waitKskLoad(ms) {
+    log("chờ phiếu KSK load xong…");
+    var t0 = Date.now();
+    var sawHoten = false;
+    while (Date.now() - t0 < (ms || 12000)) {
+      if (STOP) return false;
+      if (($("#tt32_mau2kskhoten").val() || "").trim()) {
+        if (!sawHoten) {
+          sawHoten = true;
+          log("đã có họ tên — chờ AJAX load xong (tránh bị ghi đè)…");
+        }
+        // đợi overlay + ổn định thêm: load async còn clear tuần hoàn/BS
+        await waitIdle(5000, Math.max(CFG.QUIET, 300));
+        await sleep(300);
+        // tab lâm sàng / select BS đã có trong DOM
+        if ($("#tt32_mau2tuanhoan").length && $("#tt32_mau2bacsituanhoan").length) {
+          log("✓ phiếu KSK sẵn sàng");
+          return true;
+        }
+      }
+      await sleep(CFG.POLL);
+    }
+    return sawHoten; // có hoten nhưng thiếu field — vẫn thử
+  }
+
+  function rowIds() {
+    try {
+      return $("#list1").jqGrid("getDataIDs") || [];
+    } catch (e) {
+      return [];
+    }
+  }
+
+  function pendingIds() {
+    return rowIds().filter(function (id) {
+      if (DONE.has(String(id))) return false;
+      var m = mayteOfRow(id);
+      if (m && BN_DONE.has(m)) {
+        DONE.add(String(id)); // đồng bộ row id mới sau refresh
+        return false;
+      }
+      return true;
+    });
+  }
+
+  function pickRandomId() {
+    var ids = pendingIds();
+    if (!ids.length) return null;
+    var id = ids[rnd(0, ids.length - 1)];
+    var ret = $("#list1").jqGrid("getRowData", id);
+    var ten = (ret && (ret.TEN_BENH_NHAN || ret.TEN_BENH_NHAN_HT)) || "?";
+    log("🎲 chọn " + id + " (" + ids.length + " còn) " + ten);
+    updateCount();
+    return id;
+  }
+
+  function updateCount() {
+    var el = document.getElementById("ksk_auto_count");
+    if (el)
+      el.textContent =
+        "List: " +
+        rowIds().length +
+        " | Xong: " +
+        DONE.size +
+        " | Còn: " +
+        pendingIds().length +
+        (RUNNING ? " | 🔄" : "");
+  }
+
+  function getDvtt() {
+    if (typeof dvtt !== "undefined" && dvtt) return String(dvtt);
+    if (typeof Sess_DVTT !== "undefined" && Sess_DVTT) return String(Sess_DVTT);
+    return "86098";
+  }
+
+  function getUserId() {
+    if (typeof Sess_UserID !== "undefined" && Sess_UserID) return String(Sess_UserID);
+    return BS;
+  }
+
+  async function refreshList() {
+    log("⟳ làm mới danh sách BN");
+    try {
+      $("#lammoi").click();
+    } catch (e) {
+      warn("lammoi lỗi: " + (e && e.message));
+    }
+    await sleep(300);
+    await waitIdle(6000, CFG.QUIET, "reload list");
+    // bỏ DONE không còn trong list (BN đã chuyển trạng thái)
+    var now = {};
+    rowIds().forEach(function (id) {
+      now[String(id)] = true;
+    });
+    Array.from(DONE).forEach(function (id) {
+      if (!now[id]) DONE.delete(id);
+    });
+    updateCount();
+    log("list sau refresh: " + rowIds().length + " | còn xử lý: " + pendingIds().length);
+  }
+
+  function closeKskDialog() {
+    try {
+      if (typeof tt32_khamsuckhoetheodtmaudu18_dialog !== "undefined") {
+        tt32_khamsuckhoetheodtmaudu18_dialog.dialog("close");
+      } else {
+        $("#tt32_mau2_khamkstheomau_div").dialog("close");
+      }
+    } catch (e) {}
+  }
+
+  function closeSmartCaModal() {
+    // đóng alert / dialog chọn vai trò trước
+    try {
+      $("#smartca-alert .smartca-alert-button-confirm:visible").each(function () {
+        this.click();
+      });
+    } catch (e0) {}
+    try {
+      if (
+        $("#smartca-ad-modal-select-vai-tro-sign-xml").hasClass("ui-dialog-content")
+      )
+        $("#smartca-ad-modal-select-vai-tro-sign-xml").dialog("close");
+    } catch (e1) {}
+    try {
+      if ($("#smartca-ad-modal-select-vai-tro").hasClass("ui-dialog-content"))
+        $("#smartca-ad-modal-select-vai-tro").dialog("close");
+    } catch (e2) {}
+    try {
+      $("[aria-describedby=smartca-ad-modal-select-vai-tro-sign-xml]")
+        .find(".ui-dialog-titlebar-close")
+        .click();
+    } catch (e3) {}
+    try {
+      var $x = $("#smartca-ad-modal-close-button");
+      if ($x.length) $x[0].click();
+      else $("#smartca-ad-modal-close-button").click();
+    } catch (e4) {}
+    try {
+      $("#smartca-ad-modal-container").addClass("out").removeClass("one");
+      $("body").css("overflow", "auto");
+    } catch (e5) {}
+    log("đã đóng tab/modal ký số SmartCA");
+  }
+
+  function smartCaModalOpen() {
+    var $c = $("#smartca-ad-modal-container");
+    if ($c.length && $c.hasClass("one") && !$c.hasClass("out")) return true;
+    if ($("#smartca-ad-modal").is(":visible")) return true;
+    if ($("#smartca-ad-grid-thong-tin-phieu").closest(":visible").length) return true;
+    return false;
+  }
+
+  async function waitRoleDialog(maxMs) {
+    var t0 = Date.now();
+    while (Date.now() - t0 < maxMs) {
+      if (
+        $("[aria-describedby=smartca-ad-modal-select-vai-tro-sign-xml]").is(
+          ":visible"
+        ) ||
+        $("#slb-vai-tro-sign-xml:visible").length
+      )
+        return "xml";
+      if (
+        $("[aria-describedby=smartca-ad-modal-select-vai-tro]").is(":visible")
+      )
+        return "vnpt";
+      try {
+        if (
+          $("#smartca-ad-modal-select-vai-tro-sign-xml").hasClass(
+            "ui-dialog-content"
+          ) &&
+          $("#smartca-ad-modal-select-vai-tro-sign-xml").dialog("isOpen")
+        )
+          return "xml";
+      } catch (e) {}
+      await sleep(100);
+    }
+    return null;
+  }
+
+  // Ép chọn đúng option — .val() đôi khi không đổi nếu dialog vừa mở
+  // QUAN TRỌNG: luôn chọn lại từ đầu, không tin vào giá trị hiện tại
+  function selectVaiTroXml(roleVal) {
+    var el = document.getElementById("slb-vai-tro-sign-xml");
+    if (!el) {
+      warn("không thấy #slb-vai-tro-sign-xml");
+      return false;
+    }
+    var $sel = $(el);
+    
+    // RESET: bỏ chọn tất cả trước
+    $sel.find("option").each(function () {
+      this.selected = false;
+    });
+    
+    var ok = false;
+    // 1) đúng value
+    $sel.find("option").each(function () {
+      if (String(this.value) === String(roleVal)) {
+        this.selected = true;
+        ok = true;
+        return false;
+      }
+    });
+    // 2) fallback theo text
+    if (!ok) {
+      var want =
+        roleVal === "CKS_BENH_VIEN"
+          ? /chu\s*ky\s*benh\s*vien|benh\s*vien/
+          : /nguoi\s*ket\s*luan|ket\s*luan/;
+      $sel.find("option").each(function () {
+        if (want.test(stripVn(this.textContent || ""))) {
+          this.selected = true;
+          roleVal = this.value;
+          ok = true;
+          return false;
+        }
+      });
+    }
+    
+    // Force set giá trị nhiều lần
+    el.value = roleVal;
+    $sel.val(roleVal);
+    
+    // Trigger events
+    try {
+      el.dispatchEvent(new Event("change", { bubbles: true }));
+      el.dispatchEvent(new Event("input", { bubbles: true }));
+    } catch (e) {}
+    $sel.trigger("change").trigger("chosen:updated");
+    
+    // Verify
+    var got = el.value;
+    var gotText = ($sel.find("option:selected").text() || "").trim();
+    log("select vai trò → value=" + got + " text=" + gotText);
+    
+    if (String(got) !== String(roleVal)) {
+      warn("RESET VAI TRÒ THẤT BẠI: got=" + got + " want=" + roleVal);
+      return false;
+    }
+    return true;
+  }
+
+  function selectVaiTroVnpt(roleVal) {
+    var $sel = $("#slb-vai-tro-vnptca");
+    var matched = false;
+    $sel.find("option").each(function () {
+      var t = stripVn($(this).text() || "");
+      if (roleVal === "CKS_NGUOI_KET_LUAN" && /ket\s*luan/.test(t)) {
+        this.selected = true;
+        matched = true;
+        return false;
+      }
+      if (
+        roleVal === "CKS_BENH_VIEN" &&
+        (/benh\s*vien/.test(t) || /don\s*vi/.test(t) || /thu\s*truong/.test(t))
+      ) {
+        this.selected = true;
+        matched = true;
+        return false;
+      }
+    });
+    if (!matched && $sel.find("option").length) {
+      var opts = $sel.find("option");
+      if (roleVal === "CKS_BENH_VIEN" && opts.length > 1)
+        opts[opts.length - 1].selected = true;
+      else if (opts.length) opts[0].selected = true;
+    }
+    $sel.trigger("change");
+    return matched || !!$sel.val();
+  }
+
+  // Nút đúng: .smartca-ad-sign-button-scanner data-id=XML_KSK_DINH_KY_TREN_18_TUOI
+  function findKskSignBtn() {
+    var $b = $(
+      '.smartca-ad-sign-button-scanner[data-type="btn-ky-so"][data-id="XML_KSK_DINH_KY_TREN_18_TUOI"]'
+    );
+    if ($b.length) return $b.first();
+    $b = $(
+      'div[data-type="btn-ky-so"][data-id="XML_KSK_DINH_KY_TREN_18_TUOI"]'
+    );
+    if ($b.length) return $b.first();
+    // fallback: data-id chứa KSK + 18
+    $b = $('div[data-type="btn-ky-so"]').filter(function () {
+      var id = String($(this).attr("data-id") || "");
+      return /KSK/.test(id) && /18/.test(id);
+    });
+    return $b.first();
+  }
+
+  async function waitKskSignBtn(maxMs) {
+    var totalWait = Math.min(maxMs || CFG.KYSO_GRID_WAIT_MS, 6000);
+    var t0 = Date.now();
+    var firstWait = Math.min(3000, totalWait);
+    log("theo dõi tab Khác tìm nút XML_KSK… (3 giây)");
+
+    async function waitUntil(deadline) {
+      while (Date.now() < deadline) {
+        if (STOP) return null;
+        var $b = findKskSignBtn();
+        if ($b.length && $b.is(":visible")) return $b;
+        setStatus("Chờ nút ký KSK… " + Math.round((Date.now() - t0) / 1000) + "s");
+        await sleep(Math.min(150, deadline - Date.now()));
+      }
+      return null;
+    }
+
+    var $signBtn = await waitUntil(t0 + firstWait);
+    if ($signBtn && $signBtn.length) {
+      log("✓ nút ký data-id=" + $signBtn.attr("data-id") + " row=" + $signBtn.attr("data-row-id"));
+      return $signBtn;
+    }
+    if (STOP) return null;
+
+    if (totalWait > firstWait) {
+      var $reload = $("#reloads:visible").first();
+      if ($reload.length) {
+        $reload[0].click();
+        log("chưa thấy nút ký sau 3 giây — đã bấm reloads, chờ thêm 3 giây");
+      } else {
+        warn("chưa thấy nút ký sau 3 giây và không thấy nút #reloads; vẫn chờ thêm");
+      }
+      $signBtn = await waitUntil(t0 + totalWait);
+      if ($signBtn && $signBtn.length) {
+        log("✓ nút ký xuất hiện sau reload data-id=" + $signBtn.attr("data-id") + " row=" + $signBtn.attr("data-row-id"));
+        return $signBtn;
+      }
+    }
+    warn("không thấy nút ký XML_KSK… — BỎ QUA");
+    return null;
+  }
+
+  async function clickKskSignBtn() {
+    var $btn = findKskSignBtn();
+    if (!$btn.length) {
+      warn("không thấy .smartca-ad-sign-button-scanner KSK");
+      return false;
+    }
+    try {
+      if (typeof flagDisabledButton !== "undefined") flagDisabledButton = false;
+    } catch (e) {}
+    $btn[0].click();
+    log("click ký SmartCA row=" + $btn.attr("data-row-id"));
+    return true;
+  }
+
+  // Dialog → ép chọn đúng role → verify → mới bấm KÝ SỐ
+  // LUÔN RESET về option đầu trước khi chọn để tránh lỗi chọn sai
+  async function pickRoleAndKy(roleVal, roleText) {
+    var kind = await waitRoleDialog(8000);
+    if (!kind) {
+      warn("dialog chọn vai trò không mở");
+      return false;
+    }
+    
+    // Chờ option xuất hiện trong select
+    var t0 = Date.now();
+    while (Date.now() - t0 < 3000) {
+      var $s =
+        kind === "xml" ? $("#slb-vai-tro-sign-xml") : $("#slb-vai-tro-vnptca");
+      if ($s.find('option[value="' + roleVal + '"]').length) break;
+      if ($s.find("option").length >= 2) break;
+      await sleep(80);
+    }
+    
+    log("chọn vai trò: " + roleText + " (" + roleVal + ")");
+    
+    // Chọn lần 1
+    var setOk =
+      kind === "xml" ? selectVaiTroXml(roleVal) : selectVaiTroVnpt(roleVal);
+    
+    if (!setOk) {
+      warn("chọn vai trò lần 1 thất bại");
+      return false;
+    }
+    
+    // Đợi UI update
+    await sleep(100);
+    
+    // Chọn lần 2 để chắc chắn (tránh race condition)
+    if (kind === "xml") selectVaiTroXml(roleVal);
+    else selectVaiTroVnpt(roleVal);
+    
+    await sleep(100);
+    
+    // Verify lần cuối
+    var cur =
+      kind === "xml"
+        ? ($("#slb-vai-tro-sign-xml").val() || "")
+        : ($("#slb-vai-tro-vnptca").val() || "");
+        
+    if (String(cur) !== String(roleVal)) {
+      warn("select sai sau 2 lần: got=" + cur + " want=" + roleVal + " — ép lần 3");
+      if (kind === "xml") {
+        selectVaiTroXml(roleVal);
+        await sleep(80);
+        cur = $("#slb-vai-tro-sign-xml").val() || "";
+      } else {
+        selectVaiTroVnpt(roleVal);
+        await sleep(80);
+        cur = $("#slb-vai-tro-vnptca").val() || "";
+      }
+      if (String(cur) !== String(roleVal)) {
+        warn("KHÔNG THỂ chọn «" + roleText + "» sau 3 lần thử");
+        return false;
+      }
+    }
+    
+    log("✓ đã chọn " + cur + " — bấm KÝ SỐ");
+    await sleep(100);
+    
+    if (kind === "xml") {
+      var $ky = $("#btn-ky-so-xml-ca");
+      if (!$ky.length) {
+        warn("không thấy #btn-ky-so-xml-ca");
+        return false;
+      }
+      $ky[0].click();
+    } else {
+      $("#btn-ky-so-vnpt-ca")[0].click();
+    }
+    return true;
+  }
+
+  async function kyMotVaiTro(roleVal, roleText) {
+    var mayte = bnMayte();
+    if (kysoDaKy(mayte, roleVal)) {
+      log("⏭ skip «" + roleText + "» — BN " + mayte + " đã ký rồi");
+      return true;
+    }
+    log("→ ký «" + roleText + "» (BN " + mayte + ")");
+    if (!(await clickKskSignBtn())) return false;
+    if (!(await pickRoleAndKy(roleVal, roleText))) return false;
+    if (!(await confirmAfterSign(roleText))) return false;
+    markKyso(mayte, roleVal);
+    log("✓ xong «" + roleText + "» — đánh dấu BN " + mayte);
+    return true;
+  }
+
+  function findTabKhac() {
+    var $t = $("#smartca-tab-item-khac");
+    if ($t.length) return $t.first();
+    return $(".smartca-ad-modal-content-tabs-header-item")
+      .filter(function () {
+        return /khac/.test(stripVn($(this).text() || ""));
+      })
+      .first();
+  }
+
+  function tabKhacActive($tab) {
+    $tab = $tab || findTabKhac();
+    if (!$tab.length) return false;
+    if ($tab.hasClass("smartca-ad-modal-content-tabs-header-active")) return true;
+    try {
+      if (typeof currentTabId !== "undefined" && currentTabId === "smartca-tab-item-khac")
+        return true;
+    } catch (e) {}
+    return false;
+  }
+
+  // Bắt buộc vào tab Khác trước khi tìm nút ký
+  async function goTabKhac(maxMs) {
+    maxMs = maxMs || 8000;
+    log("→ chờ/ấn tab Khác…");
+    var t0 = Date.now();
+    while (Date.now() - t0 < maxMs) {
+      if (STOP) return false;
+      var $tab = findTabKhac();
+      if ($tab.length) {
+        // grid load khóa pointer-events — jQuery click vẫn chạy, nhưng mở khóa cho chắc
+        $(".smartca-ad-modal-content-tabs-header-item").css("pointer-events", "auto");
+        if (!tabKhacActive($tab)) {
+          $tab.trigger("click");
+          await sleep(250);
+        }
+        if (tabKhacActive($tab)) {
+          log("✓ đang ở tab Khác");
+          return true;
+        }
+      }
+      setStatus("Chờ tab Khác… " + Math.round((Date.now() - t0) / 1000) + "s");
+      await sleep(150);
+    }
+    warn("không vào được tab Khác");
+    return false;
+  }
+
+  async function openSmartCaFloat() {
+    log("→ mở nút nổi SmartCA");
+    var $btn = $("#smartca-ad-float-button-scanner");
+    if (!$btn.length) {
+      warn("không thấy #smartca-ad-float-button-scanner");
+      return false;
+    }
+    $btn[0].click();
+    var t0 = Date.now();
+    while (Date.now() - t0 < 10000) {
+      if (smartCaModalOpen()) break;
+      await sleep(150);
+    }
+    if (!smartCaModalOpen()) {
+      warn("SmartCA modal không mở — bỏ qua ký");
+      return false;
+    }
+    log("SmartCA đã mở");
+    // chờ header tab render xong rồi mới ấn Khác
+    var t1 = Date.now();
+    while (Date.now() - t1 < 5000 && !findTabKhac().length) {
+      await sleep(120);
+    }
+    if (!(await goTabKhac(8000))) return false;
+    await sleep(300); // chờ reloadGrid tab Khác
+    return true;
+  }
+
+  // float → Khác → mỗi BN tối đa 1× kết luận + 1× BV
+  async function kySoViaFloat() {
+    if (!kySoEnabled()) {
+      log("bỏ qua ký số");
+      return;
+    }
+    if (!dangNhapLieu()) {
+      warn("chưa đang khám — bỏ ký float");
+      return;
+    }
+
+    var mayte = bnMayte();
+    if (kysoDu2(mayte)) {
+      log("BN " + mayte + " đã ký đủ 2 chữ ký — bỏ qua");
+      return;
+    }
+
+    log("===== KÝ SỐ SmartCA float BN " + mayte + " =====");
+    closeKskDialog();
+    await sleep(150);
+
+    if (!(await openSmartCaFloat())) return;
+
+    // chắc chắn đang Khác rồi mới tìm nút
+    if (!(await goTabKhac(5000))) {
+      closeSmartCaModal();
+      return;
+    }
+    if (!(await waitKskSignBtn(CFG.KYSO_GRID_WAIT_MS))) {
+      closeSmartCaModal();
+      return;
+    }
+
+    // 1) Người kết luận — chỉ nếu chưa ký
+    if (!kysoDaKy(mayte, "CKS_NGUOI_KET_LUAN")) {
+      if (!(await kyMotVaiTro("CKS_NGUOI_KET_LUAN", "Người kết luận"))) {
+        closeSmartCaModal();
+        return;
+      }
+    } else {
+      log("⏭ Người kết luận đã có — qua BV");
+    }
+    if (STOP) {
+      closeSmartCaModal();
+      return;
+    }
+
+    // 2) Chữ ký bệnh viện — chỉ nếu chưa ký
+    if (!kysoDaKy(mayte, "CKS_BENH_VIEN")) {
+      await sleep(150);
+      if (!(await goTabKhac(5000))) {
+        closeSmartCaModal();
+        return;
+      }
+      if (!(await waitKskSignBtn(Math.min(CFG.KYSO_GRID_WAIT_MS, 4000)))) {
+        closeSmartCaModal();
+        return;
+      }
+      await kyMotVaiTro("CKS_BENH_VIEN", "Chữ ký bệnh viện");
+    } else {
+      log("⏭ Chữ ký bệnh viện đã có — xong");
+    }
+
+    // ký BV xong → đóng hết tab/dialog ký số
+    await sleep(200);
+    closeSmartCaModal();
+    await sleep(200);
+    if (smartCaModalOpen()) closeSmartCaModal();
+    log(
+      "===== hết ký số float" +
+        (kysoDu2(mayte) ? " (đủ 2)" : "") +
+        " — đã đóng tab ====="
+    );
+  }
+
+  function findRowId() {
+    var mayte = ($("#mayte").val() || "").trim();
+    var hoten = ($("#hoten").val() || "").trim();
+    var ids = rowIds();
+    for (var i = 0; i < ids.length; i++) {
+      var r = $("#list1").jqGrid("getRowData", ids[i]);
+      if (!r) continue;
+      if (mayte && String(r.MA_BENH_NHAN) === mayte) return ids[i];
+      if (
+        hoten &&
+        (r.TEN_BENH_NHAN === hoten ||
+          (r.TEN_BENH_NHAN_HT || "").indexOf(hoten) >= 0)
+      )
+        return ids[i];
+    }
+    return $("#list1").jqGrid("getGridParam", "selrow");
+  }
+
+  function bhytRowOk(ret) {
+    return (
+      ret &&
+      String(ret.CO_BAO_HIEM) !== "0" &&
+      !!ret.TEN_BENH_NHAN &&
+      !!ret.SO_THE_BHYT
+    );
+  }
+
+  async function openBhyt() {
+    log("→ kiểm tra BHYT");
+    await guardReady("BHYT");
+    var rid = findRowId();
+    if (rid) {
+      try {
+        $("#list1").jqGrid("setSelection", rid, true);
+      } catch (e) {}
+    }
+    var id = $("#list1").jqGrid("getGridParam", "selrow");
+    var ret = id ? $("#list1").jqGrid("getRowData", id) : null;
+    if (!bhytRowOk(ret)) {
+      warn("bỏ BHYT");
+      await clickDongY(400);
+      return;
+    }
+    try {
+      $("#kt_tt_thebhyt")[0].click();
+    } catch (e) {
+      warn("BHYT lỗi: " + (e && e.message));
+      return;
+    }
+    var t0 = Date.now();
+    while (Date.now() - t0 < 1800) {
+      await clickDongY(150);
+      try {
+        if (
+          $("#formKiemtrattbhyt_modal").hasClass("ui-dialog-content") &&
+          $("#formKiemtrattbhyt_modal").dialog("isOpen")
+        )
+          break;
+      } catch (e) {}
+      await sleep(CFG.POLL);
+    }
+    try {
+      if (
+        $("#formKiemtrattbhyt_modal").hasClass("ui-dialog-content") &&
+        $("#formKiemtrattbhyt_modal").dialog("isOpen")
+      ) {
+        $("#formKiemtrattbhyt_modal").dialog("close");
+      }
+    } catch (e) {}
+    await waitIdle(4000, CFG.QUIET);
+  }
+
+  // API Mode: Gọi backend trực tiếp thay vì thao tác UI
+  async function fillKskViaApi(age, v) {
+    if (!CFG.API_MODE) return null; // không dùng API mode
+    
+    log("⚡ API MODE: lưu KSK qua API");
+    var mayte = bnMayte();
+    var hoten = ($("#hoten").val() || "").trim();
+    var gioitinh = $("#gioitinh").val() === "true" ? "Nam" : "Nữ";
+    var dt = doiTuongTheoTuoi(age);
+    
+    // Chuẩn bị payload
+    var payload = {
+      mabenhnhan: mayte,
+      hoten: hoten,
+      tuoi: age,
+      gioitinh: gioitinh,
+      doituong: dt,
+      lydo: CFG.LY_DO,
+      chieucao: v.chieucao,
+      cannang: v.cannang,
+      mach: v.mach,
+      nhiptho: v.nhiptho,
+      nhietdo: v.nhietdo,
+      huyetaptren: v.huyetaptren,
+      huyetapduoi: v.huyetapduoi,
+      tuanhoan: CFG.TUAN_HOAN,
+      bacsi: CFG.BS
+    };
+    
+    try {
+      // Gọi API lưu KSK (giả định endpoint - cần điều chỉnh theo HIS thực tế)
+      log("→ POST API lưu KSK...");
+      var response = await fetch("ksk_save_api", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+      });
+      
+      if (!response.ok) {
+        warn("API lưu KSK lỗi: " + response.status);
+        return false;
+      }
+      
+      var result = await response.json();
+      log("✓ API lưu KSK thành công: " + JSON.stringify(result).slice(0, 100));
+      return true;
+    } catch (e) {
+      warn("API MODE lỗi: " + (e && e.message) + " — fallback sang UI mode");
+      return null; // null = fallback sang UI mode
+    }
+  }
+
+  async function fillKsk(age, v) {
+    // Thử API mode trước
+    if (CFG.API_MODE) {
+      var apiResult = await fillKskViaApi(age, v);
+      if (apiResult === true) {
+        log("✓ API MODE hoàn tất — sẵn sàng ký");
+        return true;
+      }
+      if (apiResult === false) {
+        return false; // API fail hoàn toàn
+      }
+      // apiResult === null → fallback sang UI mode
+      log("→ fallback sang UI mode");
+    }
+    
+    // UI Mode (mặc định)
+    await guardReady("KSK");
+    log("→ mở KSK đủ 18");
+    $("#khamsuckhoetheodoituongdu18").click();
+    if (!(await waitKskLoad(12000))) {
+      warn("KSK chưa load");
+      return false;
+    }
+    if (!applyCmndOrFail()) return "bad_cmnd";
+
+    // Tab thông tin hành chính — điền SAU khi AJAX load xong
+    var dt = doiTuongTheoTuoi(age);
+    log("điền KSK đối tượng=" + dt);
+    setVal("tt32_mau2kskdoituong", dt);
+    $("#tt32_mau2kskdoituong").trigger("change");
+    await sleep(120);
+    setVal("tt32_mau2ksklydo", CFG.LY_DO);
+    patchDiaChi();
+    setVal("tt32_mau2chieucao", v.chieucao);
+    setVal("tt32_mau2cannang", v.cannang);
+    setVal("tt32_mau2kskmach", v.mach);
+    setVal("tt32_mau2kskhuyetapcao", v.huyetaptren);
+    setVal("tt32_mau2kskhuyetapthap", v.huyetapduoi);
+    try {
+      if (typeof tt32_loadchiso_mau2 === "function") tt32_loadchiso_mau2();
+    } catch (e) {}
+
+    // Tab lâm sàng — chờ hiện rồi điền + verify
+    log("→ tab Khám lâm sàng");
+    $("#tt32_mau2ksk_tab3").click();
+    await sleep(200);
+    if (!(await fillLamSangVerified())) {
+      warn("chưa điền xong lâm sàng/BS — KHÔNG Lưu, KHÔNG ký");
+      return false;
+    }
+
+    // đối tượng có thể bị AJAX ghi đè — set lại trước Lưu
+    if (String($("#tt32_mau2kskdoituong").val() || "") !== String(dt)) {
+      setVal("tt32_mau2kskdoituong", dt);
+      $("#tt32_mau2kskdoituong").trigger("change");
+      await sleep(80);
+    }
+    if (!($("#tt32_mau2kskdoituong").val() || "").trim()) {
+      warn("đối tượng trống — KHÔNG Lưu/ký");
+      return false;
+    }
+    if (!($("#tt32_mau2tuanhoan").val() || "").trim() ||
+        String($("#tt32_mau2bacsituanhoan").val() || "") === "0") {
+      warn("tuần hoàn/BS trống trước Lưu — KHÔNG ký");
+      return false;
+    }
+
+    // 1 chọn BS xong → 2 Lưu → 3 Đồng ý → 4 đóng bảng KSK
+    closeChosenDrops();
+    await sleep(100);
+    log("→ Lưu KSK");
+    $("#tt32_mau2luuthongtin").click();
+    
+    // Chờ & bấm Đồng ý ngay (không cần đợi "Đã cập nhật")
+    await clickDongY(2000);
+    
+    // Đóng bảng KSK ngay sau khi Đồng ý
+    log("→ đóng bảng KSK");
+    closeKskDialog();
+    await sleep(200);
+    await clickDongY(300);
+    await waitIdle(2000, CFG.QUIET);
+    if ($("#tt32_mau2_khamkstheomau_div").is(":visible")) {
+      closeKskDialog();
+      await sleep(150);
+    }
+    log("✓ đã đóng bảng KSK — sẵn sàng ký");
+    return true;
+  }
+
+  // Lưu trên màn khám (danh sách BN) sau khi ký
+  async function luuDanhSachBn() {
+    log("→ Lưu danh sách BN (#luu)");
+    await guardReady("Lưu DS");
+    var $luu = $("#luu");
+    if (!$luu.length) {
+      warn("không thấy #luu");
+      return false;
+    }
+    if ($luu.prop("disabled") || $luu.hasClass("button_disabled")) {
+      warn("#luu đang disabled — bỏ qua");
+      return false;
+    }
+    try {
+      $luu[0].click();
+    } catch (e) {
+      $luu.click();
+    }
+    await clickDongY(2000);
+    await waitIdle(5000, CFG.QUIET);
+    await clickDongY(600);
+    log("✓ đã Lưu danh sách BN");
+    return true;
+  }
+
+  function dangNhapLieu() {
+    var hasBn = !!($("#hoten").val() || "").trim();
+    if (!hasBn) return false;
+    var ttk = $('input[name=trangthaikham]:checked').val();
+    if (ttk === "2") return true;
+    if (
+      typeof trangthaikham !== "undefined" &&
+      (trangthaikham === "kham" || trangthaikham === "sua")
+    )
+      return true;
+    if ($("#kham").prop("disabled")) return true;
+    return false;
+  }
+
+  async function ensureExamOpen() {
+    if (dangNhapLieu()) {
+      log("đang nhập sẵn → không ấn Khám");
+      return await waitBnReady(12000);
+    }
+    if ($("#kham").prop("disabled")) {
+      warn("Khám disabled");
+      return false;
+    }
+    await guardReady("Khám");
+    log("→ ấn Khám");
+    $("#kham").click();
+    await sleep(150);
+    await clickDongY(500);
+    return await waitBnReady(15000);
+  }
+
+  async function safeHuy() {
+    await waitIdle(4000, CFG.QUIET);
+    if (!dangNhapLieu() && !($("#hoten").val() || "").trim()) return;
+    
+    // Lưu danh sách BN trước khi Hủy
+    try {
+      await luuDanhSachBn();
+    } catch (e) {
+      warn("Lưu DS trước Hủy lỗi: " + (e && e.message));
+    }
+    
+    log("→ Hủy");
+    $("#huy").click();
+    await clickDongY(1000);
+    await waitIdle(4000, CFG.QUIET);
+  }
+
+  function markBnDone(id) {
+    DONE.add(String(id));
+    var m = bnMayte() || mayteOfRow(id);
+    if (m) BN_DONE.add(m);
+    updateCount();
+  }
+
+  async function fillCurrentPatient(id) {
+    if (STOP) return;
+    var m0 = mayteOfRow(id);
+    if (m0 && BN_DONE.has(m0)) {
+      log("⏭ BN " + m0 + " đã xử lý — bỏ qua");
+      DONE.add(String(id));
+      updateCount();
+      return;
+    }
+    log("===== BN " + id + (m0 ? " / " + m0 : "") + " =====");
+    if (!(await ensureExamOpen())) return;
+
+    var mayte = bnMayte() || m0;
+    if (mayte && BN_DONE.has(mayte)) {
+      log("⏭ BN " + mayte + " đã xử lý — bỏ qua");
+      markBnDone(id);
+      return;
+    }
+
+    var ageRaw = ($("#tuoi").val() || "").trim();
+    if (ageRaw === "") {
+      warn("thiếu tuổi");
+      return;
+    }
+    var age = parseInt(ageRaw, 10);
+    if (isNaN(age)) return;
+    var isNam = $("#gioitinh").val() === "true";
+    log((isNam ? "Nam" : "Nữ") + " " + age + " tuổi");
+    if (age < 18) {
+      warn("<18 bỏ");
+      await safeHuy();
+      markBnDone(id);
+      return;
+    }
+
+    try {
+      await openBhyt();
+    } catch (e) {
+      await clickDongY(500);
+    }
+
+    await guardReady("sinh hiệu");
+    var v = vitals(age, isNam);
+    fillSinhHieu(v);
+
+    if (
+      !$("#khamsuckhoetheodoituongdu18").is(":visible") ||
+      $("#khamsuckhoetheodoituongdu18").prop("disabled")
+    ) {
+      warn("không có nút KSK đủ 18");
+    } else {
+      var kskRet = await fillKsk(age, v);
+      if (kskRet === "bad_cmnd") {
+        closeKskDialog();
+        await safeHuy();
+        markBnDone(id);
+        return;
+      }
+      // BS+Lưu+Đồng ý+đóng bảng → ký → Hủy (Lưu DS tự động trước Hủy)
+      if (kskRet) {
+        if (kySoEnabled()) {
+          try {
+            await kySoViaFloat();
+          } catch (e) {
+            warn("ký float lỗi: " + (e && e.message));
+            closeSmartCaModal();
+          }
+        } else {
+          log("KSK đã lưu — tắt ký số");
+        }
+      }
+    }
+
+    await safeHuy();
+    markBnDone(id);
+    log("xong BN " + id + (mayte ? " / " + mayte : ""));
+  }
+
+  async function processRow(id) {
+    if (STOP || DONE.has(String(id))) return;
+    if (dangNhapLieu()) {
+      var curId = $("#list1").jqGrid("getGridParam", "selrow");
+      if (curId && String(curId) !== String(id)) await safeHuy();
+      else if (curId && String(curId) === String(id)) {
+        await fillCurrentPatient(id);
+        return;
+      }
+    }
+    await guardReady("chọn dòng");
+    $("#list1").jqGrid("setSelection", id, true);
+    await sleep(80);
+    await waitIdle(4000, CFG.QUIET);
+    await fillCurrentPatient(id);
+  }
+
+  async function start() {
+    if (RUNNING) {
+      warn("đang chạy rồi");
+      return;
+    }
+    RUNNING = true;
+    STOP = false;
+    CONTINUOUS = true;
+    REFRESH_REQUESTED = false;
+    STEP = 0;
+    DONE.clear(); // ponytail: giữ BN_DONE + KYSO_DONE qua Start lại trong phiên
+    updateBtn();
+    log("▶ START liên tục");
+    updateCount();
+
+    while (!STOP) {
+      try {
+        if (autoRefreshEnabled() || REFRESH_REQUESTED) {
+          REFRESH_REQUESTED = false;
+          await refreshList();
+        }
+        var ids = pendingIds();
+        if (!ids.length) {
+          log(
+            (autoRefreshEnabled()
+              ? "list trống — chờ "
+              : "đã xử lý hết danh sách hiện tại — chờ ") +
+              CFG.EMPTY_WAIT_MS / 1000 +
+              "s rồi quét lại…"
+          );
+          updateCount();
+          await sleep(CFG.EMPTY_WAIT_MS);
+          continue;
+        }
+        var id = pickRandomId();
+        if (!id) {
+          await sleep(CFG.EMPTY_WAIT_MS);
+          continue;
+        }
+        await processRow(id);
+      } catch (e) {
+        warn("lỗi: " + (e && e.message));
+        console.error(e);
+        try {
+          await clickDongY(800);
+          await safeHuy();
+        } catch (e2) {}
+      }
+    }
+    log("⏹ đã dừng — xử lý được " + DONE.size + " BN");
+    RUNNING = false;
+    STOP = true;
+    CONTINUOUS = false;
+    REFRESH_REQUESTED = false;
+    updateBtn();
+  }
+
+  async function runOne() {
+    if (RUNNING) {
+      warn("đang chạy rồi");
+      return;
+    }
+    RUNNING = true;
+    STOP = false;
+    CONTINUOUS = false;
+    REFRESH_REQUESTED = false;
+    STEP = 0;
+    updateBtn();
+    log("▶ 1 BN");
+    try {
+      if (dangNhapLieu()) {
+        await fillCurrentPatient($("#list1").jqGrid("getGridParam", "selrow"));
+      } else {
+        var id = pickRandomId();
+        if (!id) warn("hết BN / list trống");
+        else await processRow(id);
+      }
+    } catch (e) {
+      warn(String(e && e.message));
+    }
+    RUNNING = false;
+    STOP = true;
+    CONTINUOUS = false;
+    REFRESH_REQUESTED = false;
+    updateBtn();
+    log("xong 1 BN");
+  }
+
+  function stop() {
+    STOP = true;
+    REFRESH_REQUESTED = false;
+    log("⏹ STOP…");
+    updateBtn();
+  }
+
+  function updateBtn() {
+    var go = document.getElementById("ksk_auto_go");
+    var one = document.getElementById("ksk_auto_one");
+    var st = document.getElementById("ksk_auto_stop");
+    var refresh = document.getElementById("ksk_auto_refresh_now");
+    if (go) go.disabled = RUNNING;
+    if (one) one.disabled = RUNNING;
+    if (st) st.disabled = !RUNNING;
+    if (refresh) refresh.disabled = !RUNNING || !CONTINUOUS;
+  }
+
+  function mountUI() {
+    $("#ksk_auto_panel").remove();
+    var css =
+      "#ksk_auto_panel{position:fixed;top:60px;right:12px;z-index:999999;width:320px;" +
+      "background:#1a2332;color:#e8eef7;font:12px/1.4 Consolas,monospace;border-radius:10px;" +
+      "box-shadow:0 8px 28px rgba(0,0,0,.45);padding:10px 12px;border:1px solid #3a4a63}" +
+      "#ksk_auto_panel h3{margin:0 0 8px;font:600 13px/1.2 system-ui;color:#7dd3fc}" +
+      "#ksk_auto_panel h4{margin:8px 0 4px;font:600 11px/1.2 system-ui;color:#94a3b8;text-transform:uppercase}" +
+      "#ksk_auto_panel .row{display:flex;gap:6px;flex-wrap:wrap;margin:6px 0}" +
+      "#ksk_auto_panel button{flex:1;min-width:70px;padding:7px 8px;border:0;border-radius:6px;" +
+      "cursor:pointer;font-weight:600;font-size:12px}" +
+      "#ksk_auto_go{background:#22c55e;color:#052e16}" +
+      "#ksk_auto_one{background:#38bdf8;color:#082f49}" +
+      "#ksk_auto_stop{background:#f97316;color:#431407}" +
+      "#ksk_auto_reset{background:#64748b;color:#fff}" +
+      "#ksk_auto_refresh_now{background:#0ea5e9;color:#082f49}" +
+      "#ksk_auto_panel button:disabled{opacity:.45;cursor:not-allowed}" +
+      "#ksk_auto_status{min-height:32px;margin:6px 0;color:#fde68a;word-break:break-word}" +
+      "#ksk_auto_count{color:#94a3b8;margin-bottom:4px}" +
+      "#ksk_auto_log{height:140px;overflow:auto;background:#0f172a;border-radius:6px;" +
+      "padding:6px;white-space:pre-wrap;color:#cbd5e1;font-size:11px}" +
+      "#ksk_auto_x{float:right;background:transparent;color:#94a3b8;border:0;cursor:pointer;font-size:14px}" +
+      "#ksk_auto_menu_btn{width:100%;margin:4px 0;background:#334155;color:#e2e8f0}" +
+      "#ksk_auto_opts{margin:6px 0;padding:8px;background:#0f172a;border-radius:6px;color:#cbd5e1;font-size:11px;max-height:400px;overflow-y:auto}" +
+      "#ksk_auto_opts[hidden]{display:none}" +
+      "#ksk_auto_opts label{display:flex;align-items:center;gap:6px;margin:4px 0}" +
+      "#ksk_auto_opts label strong{color:#fbbf24}" +
+      "#ksk_auto_opts input[type=number],#ksk_auto_opts input[type=text]{flex:1;padding:4px 6px;background:#1e293b;border:1px solid#475569;border-radius:4px;color:#e2e8f0;font-size:11px}" +
+      ".cfg-row{display:grid;grid-template-columns:150px 1fr;gap:6px;align-items:center;margin:4px 0}"+
+      ".cfg-label{color:#94a3b8;font-size:10px}";
+
+    if (!document.getElementById("ksk_auto_style")) {
+      $("<style id='ksk_auto_style'>").text(css).appendTo("head");
+    }
+
+    var $p = $(
+      '<div id="ksk_auto_panel">' +
+        '<button type="button" id="ksk_auto_x" title="Đóng">✕</button>' +
+        "<h3>KSK Auto</h3>" +
+        '<div id="ksk_auto_count"></div>' +
+        '<div class="row">' +
+        '<button type="button" id="ksk_auto_go">▶ Chạy liên tục</button>' +
+        '<button type="button" id="ksk_auto_one">1 BN</button>' +
+        "</div>" +
+        '<div class="row">' +
+        '<button type="button" id="ksk_auto_stop" disabled>⏹ Dừng</button>' +
+        '<button type="button" id="ksk_auto_reset">Reset</button>' +
+        "</div>" +
+        '<button type="button" id="ksk_auto_refresh_now" disabled>⟳ Cập nhật danh sách</button>' +
+        '<button type="button" id="ksk_auto_menu_btn" aria-expanded="false">⚙ Cấu hình ▾</button>' +
+        '<div id="ksk_auto_opts" hidden>' +
+        '<label><input type="checkbox" id="ksk_auto_kyso" checked> Bật ký số sau khi lưu</label>' +
+        '<label><input type="checkbox" id="ksk_auto_refresh" checked> Tự động làm mới danh sách</label>' +
+        // API Mode ẩn - chưa hoàn thiện
+        // '<label><input type="checkbox" id="ksk_auto_api_mode"> <strong>⚡ API Mode</strong> - Gọi API trực tiếp (nhanh hơn UI)</label>' +
+        '<h4>Bác sĩ & Nội dung</h4>' +
+        '<div class="cfg-row"><span class="cfg-label">Mã bác sĩ:</span><input type="text" id="cfg_bs" value="' + CFG.BS + '"></div>' +
+        '<div class="cfg-row"><span class="cfg-label">Lý do KSK:</span><input type="text" id="cfg_lydo" value="' + CFG.LY_DO + '"></div>' +
+        '<div class="cfg-row"><span class="cfg-label">Tuần hoàn:</span><input type="text" id="cfg_tuanhoan" value="' + CFG.TUAN_HOAN + '"></div>' +
+        '<h4>Tốc độ (ms)</h4>' +
+        '<div class="cfg-row"><span class="cfg-label">QUIET (ổn định UI):</span><input type="number" id="cfg_quiet" value="' + CFG.QUIET + '" min="50" max="500"></div>' +
+        '<div class="cfg-row"><span class="cfg-label">POLL (kiểm tra):</span><input type="number" id="cfg_poll" value="' + CFG.POLL + '" min="30" max="200"></div>' +
+        '<h4>Timeout (ms)</h4>' +
+        '<div class="cfg-row"><span class="cfg-label">Ký số SmartCA:</span><input type="number" id="cfg_kyso_wait" value="' + CFG.KYSO_WAIT_MS + '" min="10000" max="60000" step="1000"></div>' +
+        '<div class="cfg-row"><span class="cfg-label">Chờ nút ký:</span><input type="number" id="cfg_kyso_grid" value="' + CFG.KYSO_GRID_WAIT_MS + '" min="2000" max="10000" step="500"></div>' +
+        '<h4>Sinh hiệu - Chiều cao Nam (cm)</h4>' +
+        '<div class="cfg-row"><span class="cfg-label">&lt;60 tuổi (min-max):</span><input type="number" id="cfg_nam_h_min" value="' + CFG.NAM_HEIGHT_MIN + '" min="140" max="200" style="width:60px"><input type="number" id="cfg_nam_h_max" value="' + CFG.NAM_HEIGHT_MAX + '" min="140" max="200" style="width:60px"></div>' +
+        '<div class="cfg-row"><span class="cfg-label">≥60 tuổi (min-max):</span><input type="number" id="cfg_nam_h60_min" value="' + CFG.NAM_HEIGHT_60_MIN + '" min="140" max="200" style="width:60px"><input type="number" id="cfg_nam_h60_max" value="' + CFG.NAM_HEIGHT_60_MAX + '" min="140" max="200" style="width:60px"></div>' +
+        '<h4>Sinh hiệu - Chiều cao Nữ (cm)</h4>' +
+        '<div class="cfg-row"><span class="cfg-label">&lt;60 tuổi (min-max):</span><input type="number" id="cfg_nu_h_min" value="' + CFG.NU_HEIGHT_MIN + '" min="130" max="190" style="width:60px"><input type="number" id="cfg_nu_h_max" value="' + CFG.NU_HEIGHT_MAX + '" min="130" max="190" style="width:60px"></div>' +
+        '<div class="cfg-row"><span class="cfg-label">≥60 tuổi (min-max):</span><input type="number" id="cfg_nu_h60_min" value="' + CFG.NU_HEIGHT_60_MIN + '" min="130" max="190" style="width:60px"><input type="number" id="cfg_nu_h60_max" value="' + CFG.NU_HEIGHT_60_MAX + '" min="130" max="190" style="width:60px"></div>' +
+        '<h4>Sinh hiệu - Khác</h4>' +
+        '<div class="cfg-row"><span class="cfg-label">BMI (min-max):</span><input type="number" id="cfg_bmi_min" value="' + CFG.BMI_MIN + '" min="15" max="35" step="0.1" style="width:60px"><input type="number" id="cfg_bmi_max" value="' + CFG.BMI_MAX + '" min="15" max="35" step="0.1" style="width:60px"></div>' +
+        '<div class="cfg-row"><span class="cfg-label">Mạch &lt;60t (min-max):</span><input type="number" id="cfg_mach_min" value="' + CFG.MACH_MIN + '" min="50" max="120" style="width:60px"><input type="number" id="cfg_mach_max" value="' + CFG.MACH_MAX + '" min="50" max="120" style="width:60px"></div>' +
+        '<div class="cfg-row"><span class="cfg-label">Mạch ≥60t (min-max):</span><input type="number" id="cfg_mach60_min" value="' + CFG.MACH_60_MIN + '" min="50" max="120" style="width:60px"><input type="number" id="cfg_mach60_max" value="' + CFG.MACH_60_MAX + '" min="50" max="120" style="width:60px"></div>' +
+        '<div class="cfg-row"><span class="cfg-label">Nhịp thở (min-max):</span><input type="number" id="cfg_nhiptho_min" value="' + CFG.NHIPTHO_MIN + '" min="12" max="30" style="width:60px"><input type="number" id="cfg_nhiptho_max" value="' + CFG.NHIPTHO_MAX + '" min="12" max="30" style="width:60px"></div>' +
+        '<div class="cfg-row"><span class="cfg-label">Nhiệt độ:</span><input type="number" id="cfg_nhietdo" value="' + CFG.NHIETDO + '" min="35" max="39" step="0.1"></div>' +
+        '<div class="cfg-row"><span class="cfg-label">HA trên &lt;60t (min-max):</span><input type="number" id="cfg_ha_min" value="' + CFG.HUYETAP_MIN + '" min="80" max="180" style="width:60px"><input type="number" id="cfg_ha_max" value="' + CFG.HUYETAP_MAX + '" min="80" max="180" style="width:60px"></div>' +
+        '<div class="cfg-row"><span class="cfg-label">HA trên ≥60t (min-max):</span><input type="number" id="cfg_ha60_min" value="' + CFG.HUYETAP_60_MIN + '" min="80" max="180" style="width:60px"><input type="number" id="cfg_ha60_max" value="' + CFG.HUYETAP_60_MAX + '" min="80" max="180" style="width:60px"></div>' +
+        '<button type="button" id="cfg_apply" style="margin-top:8px;width:100%;background:#10b981;color:#022c22">✓ Áp dụng cấu hình</button>' +
+        "</div>" +
+        '<div id="ksk_auto_status">Sẵn sàng — chạy đến khi Dừng</div>' +
+        '<div id="ksk_auto_log"></div>' +
+        "</div>"
+    );
+    $p.appendTo("body");
+
+    $("#ksk_auto_go").on("click", function () {
+      start();
+    });
+    $("#ksk_auto_one").on("click", function () {
+      runOne();
+    });
+    $("#ksk_auto_stop").on("click", stop);
+    $("#ksk_auto_refresh_now").on("click", function () {
+      if (!RUNNING || !CONTINUOUS) return;
+      REFRESH_REQUESTED = true;
+      log("đã yêu cầu cập nhật — sẽ làm mới sau khi xử lý BN hiện tại");
+    });
+    $("#ksk_auto_reset").on("click", function () {
+      DONE.clear();
+      BN_DONE.clear();
+      KYSO_DONE = {};
+      STEP = 0;
+      LOGS = [];
+      pushLog("reset DONE + BN_DONE + KYSO_DONE");
+      updateCount();
+      setStatus("Đã reset");
+    });
+    $("#ksk_auto_menu_btn").on("click", function () {
+      var $menu = $("#ksk_auto_opts");
+      var isOpen = !$menu.prop("hidden");
+      $menu.prop("hidden", isOpen);
+      $(this)
+        .attr("aria-expanded", String(!isOpen))
+        .text(isOpen ? "⚙ Cấu hình ▾" : "⚙ Cấu hình ▴");
+    });
+    $("#ksk_auto_kyso").on("change", function () {
+      ENABLE_KYSO = $(this).is(":checked");
+      log("ký số: " + (ENABLE_KYSO ? "BẬT" : "TẮT"));
+    });
+    $("#ksk_auto_refresh").on("change", function () {
+      ENABLE_AUTO_REFRESH = $(this).is(":checked");
+      log("tự động làm mới: " + (ENABLE_AUTO_REFRESH ? "BẬT" : "TẮT"));
+    });
+    // API Mode event handler - ẩn tạm thời
+    // $("#ksk_auto_api_mode").on("change", function () {
+    //   CFG.API_MODE = $(this).is(":checked");
+    //   log("⚡ API MODE: " + (CFG.API_MODE ? "BẬT (gọi API trực tiếp)" : "TẮT (thao tác UI)"));
+    // });
+    $("#cfg_apply").on("click", function () {
+      CFG.BS = $("#cfg_bs").val().trim();
+      CFG.LY_DO = $("#cfg_lydo").val().trim();
+      CFG.TUAN_HOAN = $("#cfg_tuanhoan").val().trim();
+      CFG.QUIET = parseInt($("#cfg_quiet").val(), 10) || 150;
+      CFG.POLL = parseInt($("#cfg_poll").val(), 10) || 50;
+      CFG.KYSO_WAIT_MS = parseInt($("#cfg_kyso_wait").val(), 10) || 30000;
+      CFG.KYSO_GRID_WAIT_MS = parseInt($("#cfg_kyso_grid").val(), 10) || 4000;
+      CFG.NAM_HEIGHT_MIN = parseInt($("#cfg_nam_h_min").val(), 10) || 160;
+      CFG.NAM_HEIGHT_MAX = parseInt($("#cfg_nam_h_max").val(), 10) || 175;
+      CFG.NAM_HEIGHT_60_MIN = parseInt($("#cfg_nam_h60_min").val(), 10) || 155;
+      CFG.NAM_HEIGHT_60_MAX = parseInt($("#cfg_nam_h60_max").val(), 10) || 170;
+      CFG.NU_HEIGHT_MIN = parseInt($("#cfg_nu_h_min").val(), 10) || 150;
+      CFG.NU_HEIGHT_MAX = parseInt($("#cfg_nu_h_max").val(), 10) || 165;
+      CFG.NU_HEIGHT_60_MIN = parseInt($("#cfg_nu_h60_min").val(), 10) || 145;
+      CFG.NU_HEIGHT_60_MAX = parseInt($("#cfg_nu_h60_max").val(), 10) || 160;
+      CFG.BMI_MIN = parseFloat($("#cfg_bmi_min").val()) || 20.0;
+      CFG.BMI_MAX = parseFloat($("#cfg_bmi_max").val()) || 24.0;
+      CFG.MACH_MIN = parseInt($("#cfg_mach_min").val(), 10) || 65;
+      CFG.MACH_MAX = parseInt($("#cfg_mach_max").val(), 10) || 90;
+      CFG.MACH_60_MIN = parseInt($("#cfg_mach60_min").val(), 10) || 60;
+      CFG.MACH_60_MAX = parseInt($("#cfg_mach60_max").val(), 10) || 85;
+      CFG.NHIPTHO_MIN = parseInt($("#cfg_nhiptho_min").val(), 10) || 16;
+      CFG.NHIPTHO_MAX = parseInt($("#cfg_nhiptho_max").val(), 10) || 20;
+      CFG.NHIETDO = parseFloat($("#cfg_nhietdo").val()) || 37;
+      CFG.HUYETAP_MIN = parseInt($("#cfg_ha_min").val(), 10) || 100;
+      CFG.HUYETAP_MAX = parseInt($("#cfg_ha_max").val(), 10) || 128;
+      CFG.HUYETAP_60_MIN = parseInt($("#cfg_ha60_min").val(), 10) || 120;
+      CFG.HUYETAP_60_MAX = parseInt($("#cfg_ha60_max").val(), 10) || 140;
+      log("✓ Đã áp dụng cấu hình mới");
+      $(this).text("✓ Đã áp dụng").css("background", "#059669");
+      setTimeout(function() {
+        $("#cfg_apply").text("✓ Áp dụng cấu hình").css("background", "#10b981");
+      }, 1500);
+    });
+    $("#ksk_auto_x").on("click", function () {
+      stop();
+      $("#ksk_auto_panel").remove();
+    });
+
+    // kéo panel
+    (function () {
+      var panel = document.getElementById("ksk_auto_panel");
+      var ox, oy, drag;
+      panel.addEventListener("mousedown", function (e) {
+        if (e.target.tagName === "BUTTON" || e.target.id === "ksk_auto_log") return;
+        drag = true;
+        ox = e.clientX - panel.getBoundingClientRect().left;
+        oy = e.clientY - panel.getBoundingClientRect().top;
+      });
+      document.addEventListener("mousemove", function (e) {
+        if (!drag) return;
+        panel.style.left = e.clientX - ox + "px";
+        panel.style.top = e.clientY - oy + "px";
+        panel.style.right = "auto";
+      });
+      document.addEventListener("mouseup", function () {
+        drag = false;
+      });
+    })();
+
+    updateCount();
+    updateBtn();
+    log("Panel sẵn sàng");
+  }
+
+  mountUI();
+
+  window.KSK_AUTO = {
+    start: start,
+    runOne: runOne,
+    stop: stop,
+    config: CFG,
+    setSpeed: function (quietMs, pollMs) {
+      if (quietMs != null) CFG.QUIET = Math.max(50, quietMs);
+      if (pollMs != null) CFG.POLL = Math.max(30, pollMs);
+      log("QUIET=" + CFG.QUIET + " POLL=" + CFG.POLL);
+    },
+    done: DONE,
+    bnDone: BN_DONE,
+    kysoDone: KYSO_DONE,
+    _destroy: function () {
+      stop();
+      $("#ksk_auto_panel").remove();
+      $("#ksk_auto_style").remove();
+    },
+  };
+})();
