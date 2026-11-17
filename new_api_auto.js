@@ -65,17 +65,10 @@
             // Bác sĩ & Nội dung KSK
             maBacSi: '1327430',
             tenBacSi: 'BSCKI. Nguyễn Thị Mỹ Chi',
-            lyDoKham: 'Kiểm tra khám sàng lọc',
+            lyDoKham: 'Khám sàng lọc sức khoẻ',
             noiDungTuanHoan: 'Chưa phát hiện bệnh lý',
             noiDungLamSang: 'Chưa phát hiện bệnh lý',
-            noiDungMat: 'Bình thường',
-            noiDungTai: 'Bình thường',
-            noiDungRang: 'Bình thường',
             diaChiThem: 'P. Long Châu',
-            chiSoThiLuc: '10/10',
-            chiSoTaiThuong: '5m',
-            chiSoTaiTham: '0.5m',
-
             // Phân loại đối tượng theo tuổi
             tuoiSinhVienMax: 22,         // <= 22: đối tượng 11 hoặc 12 (HSSV)
             dtHocSinhSinhVien: '11',
