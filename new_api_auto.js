@@ -742,38 +742,20 @@
             const bs = CFG.maBacSi;
             const noiDungChung = CFG.noiDungLamSang || 'Chưa phát hiện bệnh lý';
             const noiDungTuanHoan = CFG.noiDungTuanHoan || 'Chưa phát hiện bệnh lý';
+            const noiDungMatRang = 'Khám sàng lọc sức khoẻ';
 
             for (let i = 0; i < LS_MUC.length; i++) {
                 const m = LS_MUC[i];
                 const content = m.nd === 'tt32_mau2tuanhoan' ? noiDungTuanHoan :
-                    (m.nd === 'tt32_mau2benhvemat' ? (CFG.noiDungMat || 'Bình thường') :
-                        (m.nd === 'tt32_mau2benhvetai' ? (CFG.noiDungTai || 'Bình thường') :
-                            (m.nd === 'tt32_mau2benhverang' ? (CFG.noiDungRang || 'Bình thường') : noiDungChung)));
+                    (m.nd === 'tt32_mau2benhvemat' ? noiDungMatRang :
+                        (m.nd === 'tt32_mau2benhvetai' ? noiDungMatRang :
+                            (m.nd === 'tt32_mau2benhverang' ? noiDungMatRang : noiDungChung)));
 
                 setVal(m.nd, content);
                 if (m.bs) {
                     const ok = setChosen(m.bs, bs);
                     if (!ok && m.altBs) setChosen(m.altBs, bs);
                 }
-            }
-
-            // Chuyên khoa lẻ & Mắt, Tai mũi họng, Răng hàm mặt
-            setVal('tt32_mau2khongkinhmatphai', CFG.chiSoThiLuc || '10/10');
-            setVal('tt32_mau2khongkinhmattrai', CFG.chiSoThiLuc || '10/10');
-            setVal('tt32_mau2taitrainoithuong', CFG.chiSoTaiThuong || '5m');
-            setVal('tt32_mau2taitrainoitham', CFG.chiSoTaiTham || '0.5m');
-            setVal('tt32_mau2taiphainoithuong', CFG.chiSoTaiThuong || '5m');
-            setVal('tt32_mau2taiphainoitham', CFG.chiSoTaiTham || '0.5m');
-            setVal('tt32_mau2ranghamtren', 'Bình thường');
-            setVal('tt32_mau2ranghamduoi', 'Bình thường');
-
-            // Sản phụ khoa nếu là Nữ
-            if (isNu) {
-                setVal('tt32_mau2sanphukhoa', noiDungChung);
-                setChosen('tt32_mau2bacsiphukhoa', bs);
-            } else {
-                setVal('tt32_mau2sanphukhoa', '');
-                setChosen('tt32_mau2bacsiphukhoa', '0');
             }
 
             try {
@@ -982,6 +964,7 @@
                 const bsDefaultText = getBsOptionText('tt32_mau2bacsituanhoan', bsId) || CFG.tenBacSi || '';
                 const noiDungChung = CFG.noiDungLamSang || 'Chưa phát hiện bệnh lý';
                 const noiDungTH = CFG.noiDungTuanHoan || 'Chưa phát hiện bệnh lý';
+                const noiDungMatRang = 'Khám sàng lọc sức khoẻ';
 
                 const payload = {
                     DVTT: dvttVal,
@@ -1065,37 +1048,37 @@
                     DALIEU: noiDungChung,
                     DALIEUKETLUAN: field.DALIEUKETLUAN || '',
 
-                    SANPHUKHOA: isNu ? noiDungChung : '',
+                    SANPHUKHOA: field.SANPHUKHOA || '',
                     SANPHUKHOAKETLUAN: field.SANPHUKHOAKETLUAN || '',
-                    SANPHUKHOABS: isNu ? bsId : '0',
-                    SANPHUKHOABS_TEN: isNu ? (getBsOptionText('tt32_mau2bacsiphukhoa', bsId) || bsDefaultText) : '',
+                    SANPHUKHOABS: field.SANPHUKHOABS || '0',
+                    SANPHUKHOABS_TEN: field.SANPHUKHOABS_TEN || '',
 
                     NOITIET: noiDungChung,
                     NOITIETKETLUAN: field.NOITIETKETLUAN || '',
                     NOITIETBS: bsId,
                     NOITIETBS_TEN: getBsOptionText('tt32_mau2bacsinoitiet', bsId) || bsDefaultText,
 
-                    KHONGKINH_MATPHAI: CFG.chiSoThiLuc || '10/10',
-                    KHONGKINH_MATTRAI: CFG.chiSoThiLuc || '10/10',
+                    KHONGKINH_MATPHAI: field.KHONGKINH_MATPHAI != null ? field.KHONGKINH_MATPHAI : '',
+                    KHONGKINH_MATTRAI: field.KHONGKINH_MATTRAI != null ? field.KHONGKINH_MATTRAI : '',
                     COKINH_MATPHAI: field.COKINH_MATPHAI || '',
                     COKINH_MATTRAI: field.COKINH_MATTRAI || '',
-                    BENHVEMAT: CFG.noiDungMat || 'Bình thường',
+                    BENHVEMAT: noiDungMatRang,
                     MATBS: bsId,
                     MATBS_TEN: getBsOptionText('tt32_mau2bacsimat', bsId) || bsDefaultText,
                     MATKETLUAN: field.MATKETLUAN || '',
 
-                    TAITRAI_NOITHUONG: CFG.chiSoTaiThuong || '5m',
-                    TAITRAI_NOITHAM: CFG.chiSoTaiTham || '0.5m',
-                    TAIPHAI_NOITHUONG: CFG.chiSoTaiThuong || '5m',
-                    TAIPHAI_NOITHAM: CFG.chiSoTaiTham || '0.5m',
-                    BENHVETAI: CFG.noiDungTai || 'Bình thường',
+                    TAITRAI_NOITHUONG: field.TAITRAI_NOITHUONG != null ? field.TAITRAI_NOITHUONG : '',
+                    TAITRAI_NOITHAM: field.TAITRAI_NOITHAM != null ? field.TAITRAI_NOITHAM : '',
+                    TAIPHAI_NOITHUONG: field.TAIPHAI_NOITHUONG != null ? field.TAIPHAI_NOITHUONG : '',
+                    TAIPHAI_NOITHAM: field.TAIPHAI_NOITHAM != null ? field.TAIPHAI_NOITHAM : '',
+                    BENHVETAI: noiDungMatRang,
                     BACSITAIMUIHONG: bsId,
                     BACSITAIMUIHONG_TEN: getBsOptionText('tt32_mau2bacsitaimuihong', bsId) || bsDefaultText,
                     TAIKETLUAN: field.TAIKETLUAN || '',
 
-                    HAMTREN: 'Bình thường',
-                    HAMDUOI: 'Bình thường',
-                    BENHVERANG: CFG.noiDungRang || 'Bình thường',
+                    HAMTREN: field.HAMTREN != null ? field.HAMTREN : '',
+                    HAMDUOI: field.HAMDUOI != null ? field.HAMDUOI : '',
+                    BENHVERANG: noiDungMatRang,
                     BENHVERANGBS: bsId,
                     BENHVERANGBS_TEN: getBsOptionText('tt32_mau2bacsiranghammat', bsId) || bsDefaultText,
                     RANGKETLUAN: field.RANGKETLUAN || '',
