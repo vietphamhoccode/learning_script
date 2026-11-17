@@ -2643,6 +2643,266 @@
                     gap: 6px;
                     margin-top: 8px;
                 }
+
+                /* Refined panel theme */
+                #ksk_pro_panel {
+                    top: 16px;
+                    right: 16px;
+                    width: 460px;
+                    max-width: calc(100vw - 24px);
+                    max-height: calc(100vh - 32px);
+                    background: #0b1220;
+                    color: #e2e8f0;
+                    border: 1px solid #263449;
+                    border-radius: 16px;
+                    box-shadow: 0 24px 60px rgba(2, 8, 23, 0.62), 0 0 0 1px rgba(148, 163, 184, 0.08);
+                    font-size: 13px;
+                }
+                #ksk_pro_header {
+                    min-height: 48px;
+                    padding: 10px 16px;
+                    background: linear-gradient(120deg, #10213c 0%, #123d66 56%, #087e9d 100%);
+                    border-bottom: 1px solid rgba(125, 211, 252, 0.22);
+                }
+                #ksk_pro_header .title {
+                    gap: 9px;
+                    font-size: 14px;
+                    letter-spacing: 0.2px;
+                }
+                #ksk_pro_header .badge {
+                    padding: 3px 8px;
+                    border: 1px solid rgba(255, 255, 255, 0.24);
+                    border-radius: 999px;
+                    background: rgba(15, 23, 42, 0.28);
+                }
+                #ksk_pro_body {
+                    padding: 14px;
+                    max-height: calc(100vh - 82px);
+                    scrollbar-color: #3b536d #0b1220;
+                    scrollbar-width: thin;
+                }
+                #ksk_pro_body::-webkit-scrollbar,
+                #ksk_auto_log::-webkit-scrollbar { width: 7px; }
+                #ksk_pro_body::-webkit-scrollbar-thumb,
+                #ksk_auto_log::-webkit-scrollbar-thumb {
+                    background: #3b536d;
+                    border-radius: 999px;
+                }
+                #ksk_pro_panel .ksk-actions {
+                    grid-template-columns: repeat(2, minmax(0, 1fr));
+                    gap: 8px;
+                    margin-bottom: 12px;
+                }
+                #ksk_pro_panel .ksk-btn {
+                    min-height: 36px;
+                    padding: 8px 12px;
+                    border: 1px solid transparent;
+                    border-radius: 9px;
+                    font-size: 12px;
+                    letter-spacing: 0.1px;
+                    transition: transform 0.15s ease, box-shadow 0.15s ease, background 0.15s ease;
+                }
+                #ksk_pro_panel .ksk-btn:hover:not(:disabled) {
+                    transform: translateY(-1px);
+                    box-shadow: 0 5px 14px rgba(0, 0, 0, 0.22);
+                }
+                #ksk_pro_panel .ksk-btn-start {
+                    grid-column: 1 / -1;
+                    background: linear-gradient(135deg, #10b981, #059669);
+                    color: #ecfdf5;
+                }
+                #ksk_pro_panel .ksk-btn-pause {
+                    background: #d97706;
+                    color: #fff7ed;
+                }
+                #ksk_pro_panel .ksk-btn-stop {
+                    background: #dc2626;
+                    color: #fff1f2;
+                }
+                #ksk_pro_panel .ksk-btn-step {
+                    grid-column: 1 / -1;
+                    background: #0369a1;
+                    color: #f0f9ff;
+                }
+                #ksk_pro_panel .ksk-stats-card {
+                    gap: 12px;
+                    padding: 11px 12px;
+                    border: 1px solid #263449;
+                    border-radius: 12px;
+                    background: linear-gradient(145deg, #111e30, #101827);
+                    margin-bottom: 12px;
+                }
+                #ksk_pro_panel .ksk-stat-item { min-width: 46px; }
+                #ksk_pro_panel .ksk-stat-val {
+                    font-size: 19px;
+                    line-height: 1.15;
+                    color: #7dd3fc;
+                }
+                #ksk_pro_panel .ksk-stat-lbl {
+                    margin-top: 3px;
+                    color: #94a3b8;
+                    font-size: 9px;
+                    letter-spacing: 0.5px;
+                }
+                #ksk_pro_panel .ksk-stats-actions {
+                    display: grid;
+                    grid-template-columns: repeat(2, auto);
+                    gap: 5px;
+                }
+                #ksk_pro_panel .ksk-stats-actions .ksk-btn {
+                    min-height: 30px;
+                    padding: 5px 8px;
+                    font-size: 10px;
+                }
+                #ksk_pro_panel .ksk-btn-refresh {
+                    background: #0369a1;
+                    color: #f0f9ff;
+                }
+                #ksk_pro_panel .ksk-btn-reset,
+                #ksk_pro_panel .ksk-btn-default {
+                    background: #334155;
+                    color: #e2e8f0;
+                }
+                #ksk_pro_panel .ksk-toggles-bar {
+                    gap: 7px;
+                    margin-bottom: 12px;
+                }
+                #ksk_pro_panel .ksk-chip {
+                    min-width: 112px;
+                    padding: 8px 10px;
+                    border-color: #263449;
+                    border-radius: 10px;
+                    background: #111e30;
+                    color: #cbd5e1;
+                    font-size: 10px;
+                }
+                #ksk_pro_panel .ksk-chip strong {
+                    margin-left: 6px;
+                    color: #f1f5f9;
+                    font-size: 10px;
+                }
+                #ksk_pro_panel .ksk-chip.active {
+                    background: rgba(6, 78, 59, 0.56);
+                    border-color: #059669;
+                }
+                #ksk_pro_panel .ksk-chip.editing {
+                    background: rgba(124, 45, 18, 0.56);
+                    border-color: #ea580c;
+                }
+                #ksk_auto_status {
+                    padding: 9px 11px;
+                    margin-bottom: 12px;
+                    border: 1px solid #334155;
+                    border-left: 3px solid #38bdf8;
+                    border-radius: 9px;
+                    background: #111e30;
+                    color: #bae6fd;
+                    font-size: 12px;
+                }
+                #ksk_pro_panel .ksk-tabs {
+                    display: grid;
+                    grid-template-columns: repeat(4, minmax(0, 1fr));
+                    gap: 4px;
+                    padding: 4px;
+                    margin-bottom: 10px;
+                    border: 1px solid #263449;
+                    border-radius: 11px;
+                    background: #080f1c;
+                }
+                #ksk_pro_panel .ksk-tab-btn {
+                    min-height: 36px;
+                    padding: 6px 4px;
+                    border: 0;
+                    border-radius: 8px;
+                    color: #94a3b8;
+                    font-size: 10px;
+                    line-height: 1.25;
+                    white-space: normal;
+                }
+                #ksk_pro_panel .ksk-tab-btn.active {
+                    background: #153450;
+                    color: #bae6fd;
+                    box-shadow: inset 0 0 0 1px rgba(56, 189, 248, 0.24);
+                }
+                #ksk_pro_panel .ksk-tab-panel {
+                    padding: 12px;
+                    border: 1px solid #263449;
+                    border-radius: 12px;
+                    background: #0f1a2a;
+                }
+                #ksk_pro_panel .ksk-row {
+                    grid-template-columns: minmax(112px, 0.85fr) minmax(0, 1.5fr);
+                    gap: 10px;
+                    margin-bottom: 10px;
+                }
+                #ksk_pro_panel .ksk-row:last-child { margin-bottom: 0; }
+                #ksk_pro_panel .ksk-lbl {
+                    color: #b6c4d6;
+                    font-size: 11px;
+                    line-height: 1.35;
+                }
+                #ksk_pro_panel .ksk-input {
+                    min-height: 34px;
+                    padding: 7px 9px;
+                    border: 1px solid #35465e;
+                    border-radius: 8px;
+                    background: #0a1322;
+                    color: #e2e8f0;
+                    font-size: 12px;
+                }
+                #ksk_pro_panel .ksk-input:focus {
+                    border-color: #38bdf8;
+                    box-shadow: 0 0 0 3px rgba(56, 189, 248, 0.14);
+                }
+                #ksk_pro_panel input[type="checkbox"] {
+                    accent-color: #0ea5e9;
+                }
+                #ksk_pro_panel .ksk-option-list {
+                    display: flex;
+                    flex-direction: column;
+                    gap: 9px;
+                    margin-top: 8px;
+                    color: #cbd5e1;
+                    font-size: 11px;
+                }
+                #ksk_pro_panel .ksk-option-list label {
+                    display: flex;
+                    align-items: flex-start;
+                    gap: 8px;
+                    line-height: 1.4;
+                    cursor: pointer;
+                }
+                #ksk_auto_log {
+                    height: 128px;
+                    margin-top: 12px;
+                    padding: 9px;
+                    border: 1px solid #263449;
+                    border-radius: 10px;
+                    background: #070d17;
+                    color: #cbd5e1;
+                    font-size: 10.5px;
+                    line-height: 1.5;
+                }
+                #ksk_pro_panel .ksk-cfg-footer { gap: 8px; margin-top: 10px; }
+                #ksk_pro_panel .ksk-btn-save {
+                    flex: 2;
+                    background: #059669;
+                    color: #ecfdf5;
+                }
+                #ksk_pro_panel .ksk-btn-default { flex: 1; }
+                @media (max-width: 520px) {
+                    #ksk_pro_panel {
+                        top: 8px;
+                        right: 8px;
+                        width: calc(100vw - 16px);
+                        max-width: calc(100vw - 16px);
+                        max-height: calc(100vh - 16px);
+                    }
+                    #ksk_pro_body { max-height: calc(100vh - 68px); padding: 10px; }
+                    #ksk_pro_panel .ksk-tab-panel { padding: 10px; }
+                    #ksk_pro_panel .ksk-row { grid-template-columns: 1fr; gap: 5px; }
+                    #ksk_pro_panel .ksk-chip { min-width: 100px; }
+                }
             `;
 
             $('<style id="ksk_pro_style">').text(css).appendTo('head');
@@ -2683,9 +2943,9 @@
                                 <span class="ksk-stat-val" id="ksk_stat_pending">0</span>
                                 <span class="ksk-stat-lbl">Còn lại</span>
                             </div>
-                            <div style="display: flex; gap: 4px;">
-                                <button type="button" class="ksk-btn" id="ksk_btn_refresh" style="background:#0284c7;color:#fff;padding:4px 8px;" title="Làm mới danh sách #lammoi">⟳ Nạp DS</button>
-                                <button type="button" class="ksk-btn" id="ksk_btn_reset" style="background:#4b5563;color:#fff;padding:4px 8px;" title="Xóa danh sách tạm và bộ đếm">🧹 Reset</button>
+                            <div class="ksk-stats-actions">
+                                <button type="button" class="ksk-btn ksk-btn-refresh" id="ksk_btn_refresh" title="Làm mới danh sách #lammoi">⟳ Nạp DS</button>
+                                <button type="button" class="ksk-btn ksk-btn-reset" id="ksk_btn_reset" title="Xóa danh sách tạm và bộ đếm">🧹 Reset</button>
                             </div>
                         </div>
 
@@ -2842,20 +3102,20 @@
                                     <input type="text" class="ksk-input" id="cfg_dt_ld" value="${CFG.dtNguoiLaoDong}" title="Mã đối tượng lao động (13)">
                                 </div>
                             </div>
-                            <div style="margin-top:6px; display:flex; flex-direction:column; gap:4px;">
-                                <label style="display:flex;align-items:center;gap:6px;cursor:pointer;">
+                            <div class="ksk-option-list">
+                                <label>
                                     <input type="checkbox" id="cfg_login_detect" ${CFG.autoDisableOnLoginAlert ? 'checked' : ''}> Tự động phát hiện & tắt ký số khi có bảng "Đăng nhập SmartCA"
                                 </label>
-                                <label style="display:flex;align-items:center;gap:6px;cursor:pointer;">
+                                <label>
                                     <input type="checkbox" id="cfg_check_bhyt" ${CFG.enableCheckBhyt ? 'checked' : ''}> Tự động kiểm tra BHYT (#kt_tt_thebhyt)
                                 </label>
-                                <label style="display:flex;align-items:center;gap:6px;cursor:pointer;">
+                                <label>
                                     <input type="checkbox" id="cfg_fix_cccd" ${CFG.autoFixCccd ? 'checked' : ''}> Tự thêm 0 vào đầu CCCD 11 số
                                 </label>
-                                <label style="display:flex;align-items:center;gap:6px;cursor:pointer;">
+                                <label>
                                     <input type="checkbox" id="cfg_skip_cccd" ${CFG.skipInvalidCccd ? 'checked' : ''}> Bỏ qua ca khám nếu CCCD không đủ 12 số
                                 </label>
-                                <label style="display:flex;align-items:center;gap:6px;cursor:pointer;">
+                                <label>
                                     <input type="checkbox" id="cfg_api_mode" ${CFG.apiMode ? 'checked' : ''}> ⚡ API Mode Siêu Tốc (Lưu thẳng API, tự fallback UI nếu lỗi)
                                 </label>
                             </div>
@@ -2863,8 +3123,8 @@
 
                         <!-- Config Save/Reset Buttons -->
                         <div class="ksk-cfg-footer">
-                            <button type="button" class="ksk-btn" id="ksk_btn_save_cfg" style="background:#10b981;color:#fff;flex:2;">💾 Lưu & Áp dụng cấu hình</button>
-                            <button type="button" class="ksk-btn" id="ksk_btn_reset_cfg" style="background:#374151;color:#e5e7eb;flex:1;">↺ Mặc định</button>
+                            <button type="button" class="ksk-btn ksk-btn-save" id="ksk_btn_save_cfg">💾 Lưu & Áp dụng cấu hình</button>
+                            <button type="button" class="ksk-btn ksk-btn-default" id="ksk_btn_reset_cfg">↺ Mặc định</button>
                         </div>
 
                         <!-- Logs box -->
