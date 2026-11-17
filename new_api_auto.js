@@ -49,7 +49,8 @@
         // =========================================================================
         // 1. CẤU HÌNH MẶC ĐỊNH (DEFAULT CONFIGURATION)
         // =========================================================================
-        const STORAGE_KEY = 'KSK_AUTO_CONFIG_V4_1';
+        const STORAGE_KEY = 'KSK_AUTO_CONFIG_V4_2';
+        const LEGACY_STORAGE_KEY = 'KSK_AUTO_CONFIG_V4_1';
 
         const DEFAULT_CONFIG = {
             // Chế độ & Tính năng chung
@@ -60,7 +61,7 @@
             enableCheckBhyt: true,       // Bật/tắt kiểm tra BHYT (#kt_tt_thebhyt)
             autoFixCccd: true,           // Tự động chèn 0 vào đầu CCCD 11 số
             skipInvalidCccd: true,       // Bỏ qua BN nếu CCCD không đủ 12 số
-            apiMode: true,               // Gọi API HIS trực tiếp (nhanh gấp 10x, tự fallback UI nếu lỗi)
+            apiMode: false,              // Điền trực tiếp trên giao diện để theo dõi được từng thao tác
 
             // Bác sĩ & Nội dung KSK
             maBacSi: '1327430',
@@ -147,10 +148,16 @@
         // Nạp cấu hình từ localStorage nếu có
         function loadSavedConfig() {
             try {
-                const saved = localStorage.getItem(STORAGE_KEY);
+                let saved = localStorage.getItem(STORAGE_KEY);
+                const migrating = !saved;
+                if (migrating) saved = localStorage.getItem(LEGACY_STORAGE_KEY);
                 if (saved) {
                     const parsed = JSON.parse(saved);
                     CFG = Object.assign({}, DEFAULT_CONFIG, parsed);
+                    if (migrating) {
+                        CFG.apiMode = false;
+                        saveConfigToStorage();
+                    }
                 }
             } catch (e) {
                 console.warn('[KSK_AUTO] Không thể đọc cấu hình từ localStorage:', e);
@@ -174,8 +181,6 @@
         // =========================================================================
         let STOP = true;
         let RUNNING = false;
-        let IS_PAUSED = false;
-        let CONTINUOUS = false;
         let REFRESH_REQUESTED = false;
         let STEP = 0;
         let COMPLETED_COUNT = 0;
@@ -738,7 +743,7 @@
         }
 
         function fillLamSangAll(isNu = false) {
-            log(`Điền lâm sàng các chuyên khoa (BS: ${CFG.maBacSi})`);
+            log(`Bắt đầu điền lâm sàng các chuyên khoa (BS: ${CFG.maBacSi})`);
             const bs = CFG.maBacSi;
             const noiDungChung = CFG.noiDungLamSang || 'Chưa phát hiện bệnh lý';
             const noiDungTuanHoan = CFG.noiDungTuanHoan || 'Chưa phát hiện bệnh lý';
@@ -751,10 +756,20 @@
                         (m.nd === 'tt32_mau2benhvetai' ? noiDungMatRang :
                             (m.nd === 'tt32_mau2benhverang' ? noiDungMatRang : noiDungChung)));
 
-                setVal(m.nd, content);
+                if ($('#' + m.nd).length) {
+                    setVal(m.nd, content);
+                    log(`→ ${m.label}: đã nhập nội dung`);
+                } else {
+                    warn(`Không tìm thấy ô nội dung ${m.label} (#${m.nd})`);
+                }
+
                 if (m.bs) {
-                    const ok = setChosen(m.bs, bs);
-                    if (!ok && m.altBs) setChosen(m.altBs, bs);
+                    const selectId = $('#' + m.bs).length ? m.bs : m.altBs;
+                    if (!selectId || !$('#' + selectId).length) {
+                        warn(`Không tìm thấy ô chọn bác sĩ ${m.label} (#${m.bs})`);
+                    } else if (setChosen(selectId, bs)) {
+                        log(`→ ${m.label}: đã chọn bác sĩ`);
+                    }
                 }
             }
 
@@ -855,7 +870,10 @@
                 }
                 await sleep(CFG.pollInterval);
             }
-            return sawHoten;
+            warn(sawHoten
+                ? 'Phiếu KSK có họ tên nhưng chưa tải đủ các ô lâm sàng/bác sĩ'
+                : 'Không thấy họ tên trên phiếu KSK sau khi mở');
+            return false;
         }
 
         function getBsOptionText(selectId, bsVal) {
@@ -1166,6 +1184,7 @@
                 if (apiRet === true) return true;
             }
 
+            log('Dùng UI Mode: bắt đầu điền trực tiếp vào phiếu KSK');
             await guardReady('KSK');
             log('→ Mở phiếu KSK đủ 18 tuổi (#khamsuckhoetheodoituongdu18)');
             $('#khamsuckhoetheodoituongdu18').click();
@@ -2168,7 +2187,10 @@
             }
 
             const age = parseInt(ageRaw, 10);
-            if (isNaN(age)) return;
+            if (isNaN(age)) {
+                warn(`Tuổi bệnh nhân không hợp lệ: "${ageRaw}"`);
+                return;
+            }
 
             const isNam = $('#gioitinh').val() === 'true';
             const isNu = !isNam;
@@ -2261,24 +2283,16 @@
         }
 
         // =========================================================================
-        // 9. ĐIỀU KHIỂN CHÍNH (MAIN LOOPS: START / STEP / PAUSE / STOP)
+        // 9. ĐIỀU KHIỂN CHÍNH (MAIN LOOPS: START / STOP)
         // =========================================================================
         async function start() {
             if (RUNNING) {
-                if (IS_PAUSED) {
-                    IS_PAUSED = false;
-                    updateUIButtons();
-                    log('▶ Tiếp tục chạy tự động...');
-                    return;
-                }
                 warn('Tiến trình đang chạy!');
                 return;
             }
 
             RUNNING = true;
             STOP = false;
-            IS_PAUSED = false;
-            CONTINUOUS = true;
             REFRESH_REQUESTED = false;
             STEP = 0;
             updateUIButtons();
@@ -2286,11 +2300,6 @@
             updateCount();
 
             while (!STOP) {
-                if (IS_PAUSED) {
-                    await sleep(200);
-                    continue;
-                }
-
                 try {
                     if (CFG.enableAutoRefresh || REFRESH_REQUESTED) {
                         REFRESH_REQUESTED = false;
@@ -2328,8 +2337,6 @@
             log(`⏹ Tiến trình đã dừng — Đã xử lý ${COMPLETED_COUNT} ca khám.`);
             RUNNING = false;
             STOP = true;
-            IS_PAUSED = false;
-            CONTINUOUS = false;
             REFRESH_REQUESTED = false;
             updateUIButtons();
         }
@@ -2342,8 +2349,6 @@
 
             RUNNING = true;
             STOP = false;
-            IS_PAUSED = false;
-            CONTINUOUS = false;
             REFRESH_REQUESTED = false;
             STEP = 0;
             updateUIButtons();
@@ -2363,23 +2368,13 @@
 
             RUNNING = false;
             STOP = true;
-            IS_PAUSED = false;
-            CONTINUOUS = false;
             REFRESH_REQUESTED = false;
             updateUIButtons();
             log('Hoàn thành 1 ca khám.');
         }
 
-        function pause() {
-            if (!RUNNING) return;
-            IS_PAUSED = !IS_PAUSED;
-            log(IS_PAUSED ? '⏸ TẠM DỪNG TIẾN TRÌNH' : '▶ TIẾP TỤC TIẾN TRÌNH');
-            updateUIButtons();
-        }
-
         function stop() {
             STOP = true;
-            IS_PAUSED = false;
             REFRESH_REQUESTED = false;
             log('⏹ ĐANG DỪNG TIẾN TRÌNH...');
             updateUIButtons();
@@ -2401,19 +2396,12 @@
         // =========================================================================
         function updateUIButtons() {
             const btnGo = document.getElementById('ksk_btn_start');
-            const btnPause = document.getElementById('ksk_btn_pause');
             const btnStop = document.getElementById('ksk_btn_stop');
-            const btnOne = document.getElementById('ksk_btn_one');
             const btnRefresh = document.getElementById('ksk_btn_refresh');
 
             if (btnGo) btnGo.disabled = RUNNING;
-            if (btnPause) {
-                btnPause.disabled = !RUNNING;
-                btnPause.textContent = IS_PAUSED ? '▶ Tiếp tục' : '⏸ Tạm dừng';
-            }
             if (btnStop) btnStop.disabled = !RUNNING;
-            if (btnOne) btnOne.disabled = RUNNING;
-            if (btnRefresh) btnRefresh.disabled = RUNNING && !IS_PAUSED;
+            if (btnRefresh) btnRefresh.disabled = RUNNING;
         }
 
         function mountUI() {
@@ -2482,7 +2470,7 @@
                 /* Controls bar */
                 .ksk-actions {
                     display: grid;
-                    grid-template-columns: 1.5fr 1fr 1fr 1fr;
+                    grid-template-columns: 1fr 1fr;
                     gap: 6px;
                     margin-bottom: 10px;
                 }
@@ -2502,12 +2490,8 @@
                 .ksk-btn:disabled { opacity: 0.45; cursor: not-allowed; }
                 .ksk-btn-start { background: #10b981; color: #022c22; }
                 .ksk-btn-start:hover:not(:disabled) { background: #059669; color: #fff; }
-                .ksk-btn-pause { background: #f59e0b; color: #451a03; }
-                .ksk-btn-pause:hover:not(:disabled) { background: #d97706; color: #fff; }
                 .ksk-btn-stop { background: #ef4444; color: #450a0a; }
                 .ksk-btn-stop:hover:not(:disabled) { background: #dc2626; color: #fff; }
-                .ksk-btn-step { background: #0ea5e9; color: #082f49; }
-                .ksk-btn-step:hover:not(:disabled) { background: #0284c7; color: #fff; }
 
                 /* Stats card */
                 .ksk-stats-card {
@@ -2707,22 +2691,12 @@
                     box-shadow: 0 5px 14px rgba(0, 0, 0, 0.22);
                 }
                 #ksk_pro_panel .ksk-btn-start {
-                    grid-column: 1 / -1;
                     background: linear-gradient(135deg, #10b981, #059669);
                     color: #ecfdf5;
-                }
-                #ksk_pro_panel .ksk-btn-pause {
-                    background: #d97706;
-                    color: #fff7ed;
                 }
                 #ksk_pro_panel .ksk-btn-stop {
                     background: #dc2626;
                     color: #fff1f2;
-                }
-                #ksk_pro_panel .ksk-btn-step {
-                    grid-column: 1 / -1;
-                    background: #0369a1;
-                    color: #f0f9ff;
                 }
                 #ksk_pro_panel .ksk-stats-card {
                     gap: 12px;
@@ -2924,9 +2898,7 @@
                         <!-- Controls -->
                         <div class="ksk-actions">
                             <button type="button" class="ksk-btn ksk-btn-start" id="ksk_btn_start">▶ BẮT ĐẦU</button>
-                            <button type="button" class="ksk-btn ksk-btn-pause" id="ksk_btn_pause" disabled>⏸ Tạm dừng</button>
                             <button type="button" class="ksk-btn ksk-btn-stop" id="ksk_btn_stop" disabled>⏹ Dừng</button>
-                            <button type="button" class="ksk-btn ksk-btn-step" id="ksk_btn_one">⏭ 1 Ca</button>
                         </div>
 
                         <!-- Stats -->
@@ -3046,14 +3018,6 @@
                             <div class="ksk-row">
                                 <span class="ksk-lbl">Địa chỉ bổ sung:</span>
                                 <input type="text" class="ksk-input" id="cfg_diachi" value="${CFG.diaChiThem}">
-                            </div>
-                            <div class="ksk-row">
-                                <span class="ksk-lbl">Mắt / Tai / Răng:</span>
-                                <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:4px;">
-                                    <input type="text" class="ksk-input" id="cfg_thiluc" value="${CFG.chiSoThiLuc}" title="Thị lực">
-                                    <input type="text" class="ksk-input" id="cfg_taithuong" value="${CFG.chiSoTaiThuong}" title="Tai nói thường">
-                                    <input type="text" class="ksk-input" id="cfg_taitham" value="${CFG.chiSoTaiTham}" title="Tai nói thầm">
-                                </div>
                             </div>
                         </div>
 
@@ -3206,10 +3170,6 @@
             CFG.noiDungTuanHoan = ($('#cfg_tuanhoan').val() || '').trim() || CFG.noiDungTuanHoan;
             CFG.noiDungLamSang = ($('#cfg_lamsang').val() || '').trim() || CFG.noiDungLamSang;
             CFG.diaChiThem = ($('#cfg_diachi').val() || '').trim() || CFG.diaChiThem;
-            CFG.chiSoThiLuc = ($('#cfg_thiluc').val() || '').trim() || CFG.chiSoThiLuc;
-            CFG.chiSoTaiThuong = ($('#cfg_taithuong').val() || '').trim() || CFG.chiSoTaiThuong;
-            CFG.chiSoTaiTham = ($('#cfg_taitham').val() || '').trim() || CFG.chiSoTaiTham;
-
             // Tab 3: Delays
             CFG.stepDelay = parseInt($('#cfg_step_delay').val(), 10) || CFG.stepDelay;
             CFG.quietDelay = parseInt($('#cfg_quiet_delay').val(), 10) || CFG.quietDelay;
@@ -3236,12 +3196,10 @@
         function setupUIEvents() {
             // Main control buttons
             $('#ksk_btn_start').on('click', start);
-            $('#ksk_btn_pause').on('click', pause);
             $('#ksk_btn_stop').on('click', stop);
-            $('#ksk_btn_one').on('click', runOne);
 
             $('#ksk_btn_refresh').on('click', async function () {
-                if (RUNNING && !IS_PAUSED) {
+                if (RUNNING) {
                     REFRESH_REQUESTED = true;
                     log('Đã gửi yêu cầu làm mới — Sẽ nạp danh sách sau ca hiện tại.');
                     return;
@@ -3366,7 +3324,6 @@
         window.KSK_AUTO = {
             version: '4.0',
             start,
-            pause,
             stop,
             runOne,
             config: CFG,
