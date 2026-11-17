@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Auto KSK & SmartCA - VNPT HIS (Pro Config Version)
 // @namespace    http://tampermonkey.net/
-// @version      4.0
+// @version      4.1
 // @description  Tự động nhập liệu KSK đủ 18 tuổi, tùy chỉnh toàn bộ thông số sinh hiệu, nội dung lâm sàng, bác sĩ, thời gian delay, timeout và ký số SmartCA siêu tốc.
 // @author       AutoKSK
 // @match        *://*/*
@@ -16,7 +16,7 @@
  * - Điều chỉnh tốc độ, thời gian trễ (delays) và thời gian chờ (timeouts).
  * - Tùy chọn chế độ khám (Chờ khám #kham / Đang khám #sua), kiểm tra BHYT, Ký số SmartCA 2 vai trò.
  * - Lưu và khôi phục cấu hình qua localStorage.
- * - Hỗ trợ cả Tampermonkey và chạy trực tiếp trên Console trình duyệt / Bookmarklet.
+ * - Hỗ trợ chạy trực tiếp trên DevTools Console, DevTools Snippet hoặc Bookmarklet.
  */
 
 (function () {
@@ -61,7 +61,10 @@
             enableCheckBhyt: true,       // Bật/tắt kiểm tra BHYT (#kt_tt_thebhyt)
             autoFixCccd: true,           // Tự động chèn 0 vào đầu CCCD 11 số
             skipInvalidCccd: true,       // Bỏ qua BN nếu CCCD không đủ 12 số
-            apiMode: false,              // Điền trực tiếp trên giao diện để theo dõi được từng thao tác
+            apiMode: false,              // API chỉ dùng để lưu phiếu KSK
+            signingMode: 'ui',           // 'ui' hoặc 'api' (API lỗi thì chuyển UI)
+            scanPastDates: false,        // Dò danh sách theo ngày cũ
+            pastDaysToScan: 30,          // Số ngày dò, tính cả ngày đang chọn
 
             // Bác sĩ & Nội dung KSK
             maBacSi: '1327430',
@@ -154,6 +157,12 @@
                 if (saved) {
                     const parsed = JSON.parse(saved);
                     CFG = Object.assign({}, DEFAULT_CONFIG, parsed);
+                    if (!Object.prototype.hasOwnProperty.call(parsed, 'signingMode')) {
+                        CFG.signingMode = parsed.apiMode ? 'api' : 'ui';
+                    }
+                    if (CFG.signingMode !== 'api' && CFG.signingMode !== 'ui') {
+                        CFG.signingMode = 'ui';
+                    }
                     if (migrating) {
                         CFG.apiMode = false;
                         saveConfigToStorage();
@@ -203,6 +212,25 @@
             try {
                 el.dispatchEvent(new Event(evName, { bubbles: true }));
             } catch (e) { }
+        }
+
+        function isSmartCaSigningBusy() {
+            return ['#scanner-loading', '#smartca-loading'].some(selector => {
+                const el = document.querySelector(selector);
+                if (!el) return false;
+                const style = window.getComputedStyle(el);
+                return style.display !== 'none' && style.visibility !== 'hidden';
+            });
+        }
+
+        async function waitSmartCaSigningIdle(maxMs = 15000) {
+            const startedAt = Date.now();
+            while (Date.now() - startedAt < maxMs) {
+                if (STOP) return false;
+                if (!isSmartCaSigningBusy()) return true;
+                await sleep(150);
+            }
+            return !isSmartCaSigningBusy();
         }
 
         // =========================================================================
@@ -257,14 +285,9 @@
 
         function updateCount() {
             const elList = document.getElementById('ksk_stat_total');
-            const elDone = document.getElementById('ksk_stat_done');
-            const elPending = document.getElementById('ksk_stat_pending');
             const allIds = rowIds();
-            const pIds = pendingIds();
 
             if (elList) elList.textContent = allIds.length;
-            if (elDone) elDone.textContent = COMPLETED_COUNT;
-            if (elPending) elPending.textContent = pIds.length;
         }
 
         // =========================================================================
@@ -564,13 +587,28 @@
 
         async function refreshList() {
             log('⟳ Đang làm mới danh sách bệnh nhân (#lammoi)...');
+            const $refresh = $('#lammoi');
+            if (!$refresh.length) {
+                warn('Không tìm thấy nút làm mới danh sách (#lammoi)');
+                return false;
+            }
+            if ($refresh.prop('disabled')) {
+                warn('Nút làm mới danh sách (#lammoi) đang bị vô hiệu hóa');
+                return false;
+            }
+
             try {
-                $('#lammoi').click();
+                $refresh.click();
             } catch (e) {
                 warn(`Lỗi khi click #lammoi: ${e && e.message}`);
+                return false;
             }
             await sleep(300);
-            await waitIdle(6000, CFG.quietDelay, 'reload list');
+            const idle = await waitIdle(10000, CFG.quietDelay, 'reload list');
+            if (!idle || isLoadingUi()) {
+                warn('Danh sách chưa tải xong; dừng để tránh xử lý dữ liệu cũ');
+                return false;
+            }
 
             const now = {};
             rowIds().forEach(id => { now[String(id)] = true; });
@@ -579,6 +617,58 @@
             });
             updateCount();
             log(`✓ Danh sách sau khi làm mới: ${rowIds().length} BN | Còn xử lý: ${pendingIds().length} BN`);
+            return true;
+        }
+
+        function parseDateDdMmYyyy(value) {
+            const match = String(value || '').trim().match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+            if (!match) return null;
+
+            const day = parseInt(match[1], 10);
+            const month = parseInt(match[2], 10);
+            const year = parseInt(match[3], 10);
+            const date = new Date(year, month - 1, day);
+            if (date.getFullYear() !== year || date.getMonth() !== month - 1 || date.getDate() !== day) return null;
+            return date;
+        }
+
+        function formatDateDdMmYyyy(date) {
+            const pad = (value) => String(value).padStart(2, '0');
+            return `${pad(date.getDate())}/${pad(date.getMonth() + 1)}/${date.getFullYear()}`;
+        }
+
+        async function loadScanDate(date, dayIndex, totalDays) {
+            const $date = $('#ngaykhambenh');
+            if (!$date.length) {
+                warn('Không tìm thấy ô ngày khám (#ngaykhambenh); dừng dò ngày cũ');
+                return false;
+            }
+
+            const isDangKham = CFG.examMode === 'dang_kham';
+            const statusValue = isDangKham ? '2' : '1';
+            const statusLabel = isDangKham ? 'Đang khám' : 'Chờ khám';
+            const $status = $(`input[name="trangthaikham"][value="${statusValue}"]`);
+            if (!$status.length) {
+                warn(`Không tìm thấy bộ lọc trạng thái ${statusLabel} (giá trị ${statusValue})`);
+                return false;
+            }
+
+            const dateText = formatDateDdMmYyyy(date);
+            $date.val(dateText).trigger('change');
+            if (!$status.is(':checked')) {
+                $status.prop('checked', true).trigger('change');
+                const idle = await waitIdle(10000, CFG.quietDelay, 'đổi trạng thái khám');
+                if (!idle || isLoadingUi()) {
+                    warn('Danh sách chưa tải xong sau khi đổi trạng thái khám');
+                    return false;
+                }
+            }
+
+            DONE.clear();
+            BN_DONE.clear();
+            for (const key in KYSO_DONE) delete KYSO_DONE[key];
+            log(`Dò ngày ${dateText} (${dayIndex}/${totalDays}), trạng thái ${statusLabel}`);
+            return await refreshList();
         }
 
         // =========================================================================
@@ -1330,6 +1420,14 @@
             saveConfigToStorage();
         }
 
+        function updateSigningModeUI() {
+            const useApi = CFG.signingMode === 'api';
+            const label = useApi ? '⚡ API' : '🖱️ UI/UX';
+            $('#ksk_chip_sign_mode').toggleClass('active', useApi).toggleClass('editing', !useApi)
+                .find('strong').text(label);
+            $('#cfg_signing_mode').val(useApi ? 'api' : 'ui');
+        }
+
         function onSmartCaLoginDetected() {
             warn('🚨 PHÁT HIỆN MENU ĐĂNG NHẬP SMARTCA! Tài khoản chưa đăng nhập hoặc phiên làm việc đã hết hạn.');
             closeSmartCALoginModal();
@@ -1440,14 +1538,19 @@
 
         function findKskSignBtn() {
             let $b = $('.smartca-ad-sign-button-scanner[data-type="btn-ky-so"][data-id="XML_KSK_DINH_KY_TREN_18_TUOI"]');
-            if ($b.length) return $b.first();
-            $b = $('div[data-type="btn-ky-so"][data-id="XML_KSK_DINH_KY_TREN_18_TUOI"]');
-            if ($b.length) return $b.first();
-            $b = $('div[data-type="btn-ky-so"]').filter(function () {
+            if (!$b.length) $b = $('div[data-type="btn-ky-so"][data-id="XML_KSK_DINH_KY_TREN_18_TUOI"]');
+            if (!$b.length) $b = $('div[data-type="btn-ky-so"]').filter(function () {
                 const id = String($(this).attr('data-id') || '');
                 return /KSK/.test(id) && /18/.test(id);
             });
-            return $b.first();
+            return $b.filter(function () {
+                const $button = $(this);
+                return $button.is(':visible')
+                    && !$button.prop('disabled')
+                    && $button.attr('aria-disabled') !== 'true'
+                    && !$button.hasClass('disabled')
+                    && !$button.hasClass('ui-state-disabled');
+            }).first();
         }
 
         async function waitKskSignBtn(maxMs = 5000) {
@@ -1463,7 +1566,10 @@
                         return null;
                     }
                     const $b = findKskSignBtn();
-                    if ($b.length && $b.is(':visible')) return $b;
+                    if ($b.length && $b.is(':visible') && !$b.prop('disabled')
+                        && $b.attr('aria-disabled') !== 'true'
+                        && !$b.hasClass('disabled')
+                        && !$b.hasClass('ui-state-disabled')) return $b;
                     await sleep(100);
                 }
                 return null;
@@ -1520,6 +1626,7 @@
         async function waitRoleDialog(maxMs = 8000) {
             const t0 = Date.now();
             while (Date.now() - t0 < maxMs) {
+                if (STOP) return null;
                 if (isSmartCALoginAppeared()) {
                     onSmartCaLoginDetected();
                     return null;
@@ -1569,10 +1676,19 @@
             return String(el.value) === String(roleVal);
         }
 
+        function classifySignNotice(text, hasSuccessIcon = false, hasFailureIcon = false) {
+            const normalized = stripVn(text);
+            if (hasSuccessIcon || /thanh cong|da thuc hien ky so/.test(normalized)) return 'success';
+            if (hasFailureIcon || /loi|that bai|khong thanh cong|da huy|chua ky|chua cau hinh|khong the|tu choi/.test(normalized)) return 'failure';
+            if (/yeu cau ky so|da duoc gui|ung dung|dien thoai|xac thuc|vui long|dang xac nhan|dang xu ly|cho xac nhan/.test(normalized)) return 'pending';
+            return 'unknown';
+        }
+
         async function confirmAfterSign(label, maxMs = null) {
             maxMs = maxMs || CFG.kysoWaitMs;
             log(`⏳ Chờ xác nhận ký số «${label}» (tối đa ${Math.round(maxMs / 1000)}s)...`);
             const t0 = Date.now();
+            let lastPendingMessage = '';
 
             while (Date.now() - t0 < maxMs) {
                 if (STOP) return false;
@@ -1583,24 +1699,85 @@
                 const elapsed = Math.round((Date.now() - t0) / 1000);
                 setStatus(`Chờ xác nhận ký «${label}»... ${elapsed}s`);
 
-                const $alert = $('#smartca-alert:visible');
+                const $alert = $('#smartca-alert:visible').first();
                 if ($alert.length) {
                     const $ok = $alert.find('.smartca-alert-button-confirm:visible').first();
-                    if ($ok.length) {
-                        const txt = ($alert.find('.smartca-alert-content').text() || '').trim();
-                        $ok[0].click();
-                        const normTxt = stripVn(txt);
-                        if (/loi|that bai|khong thanh cong|da huy|chua ky|chua cau hinh|khong the/.test(normTxt)) {
-                            warn(`Cảnh báo ký «${label}»: ${txt.slice(0, 80)}`);
-                            await sleep(200);
+                    const txt = ($alert.find('.smartca-alert-content-text-wrapper span').first().text()
+                        || $alert.find('.smartca-alert-content').text()
+                        || $alert.text() || '').trim();
+                    const noticeType = classifySignNotice(
+                        txt,
+                        $alert.find('.fa-check-circle, [typed="success"]').length > 0,
+                        $alert.find('.fa-times-circle, [typed="error"]').length > 0
+                    );
+
+                    if (noticeType === 'success') {
+                        if ($ok.length) $ok[0].click();
+                        const closeStartedAt = Date.now();
+                        while ($('#smartca-alert:visible').length && Date.now() - closeStartedAt < 4000) {
+                            await sleep(100);
+                        }
+                        if ($('#smartca-alert:visible').length) {
+                            warn(`SmartCA chưa đóng thông báo sau khi xác nhận «${label}»`);
+                            return false;
+                        }
+                        if (!(await waitSmartCaSigningIdle())) {
+                            warn(`SmartCA báo ký thành công «${label}» nhưng tiến trình vẫn đang chạy`);
                             return false;
                         }
                         success(`Đã xác nhận ký «${label}»: ${txt.slice(0, 60)}`);
-                        await sleep(200);
                         return true;
                     }
+
+                    if (noticeType === 'failure') {
+                        if ($ok.length) $ok[0].click();
+                        warn(`Cảnh báo ký «${label}»: ${txt.slice(0, 100)}`);
+                        return false;
+                    }
+
+                    if (noticeType === 'pending') {
+                        if (txt !== lastPendingMessage) {
+                            log(`SmartCA đang chờ xác thực «${label}»: ${txt.slice(0, 100)}`);
+                            lastPendingMessage = txt;
+                        }
+                        if ($ok.length) {
+                            $ok[0].click();
+                            const closeStartedAt = Date.now();
+                            while ($('#smartca-alert:visible').length && Date.now() - closeStartedAt < 4000) {
+                                await sleep(100);
+                            }
+                        } else {
+                            await sleep(CFG.pollInterval);
+                        }
+                        continue;
+                    }
+
+                    warn(`Không xác định được kết quả ký «${label}»: ${txt.slice(0, 100) || 'thông báo trống'}`);
+                    if ($ok.length) $ok[0].click();
+                    return false;
                 }
-                await clickDongY(150);
+
+                const $popup = $('#popup_container:visible').first();
+                if ($popup.length) {
+                    const txt = ($('#popup_message').text() || $popup.text() || '').trim();
+                    const noticeType = classifySignNotice(txt);
+                    if (noticeType === 'success') {
+                        $('#popup_ok:visible').first().click();
+                        if (!(await waitSmartCaSigningIdle())) return false;
+                        success(`Đã xác nhận ký «${label}»: ${txt.slice(0, 60)}`);
+                        return true;
+                    }
+                    $('#popup_ok:visible').first().click();
+                    if (noticeType === 'pending') {
+                        if (txt !== lastPendingMessage) {
+                            log(`SmartCA đang chờ xác thực «${label}»: ${txt.slice(0, 100)}`);
+                            lastPendingMessage = txt;
+                        }
+                        continue;
+                    }
+                    warn(`Thông báo ký «${label}»: ${txt.slice(0, 100) || 'không xác định'}`);
+                    return false;
+                }
                 await sleep(CFG.pollInterval);
             }
             warn(`Timeout chờ xác nhận ký «${label}»`);
@@ -1620,8 +1797,8 @@
             }
 
             log(`→ Bắt đầu ký vai trò «${roleLabel}» (${roleVal})`);
-            const $btn = findKskSignBtn();
-            if (!$btn.length) {
+            const $btn = await waitKskSignBtn(CFG.kysoGridWaitMs);
+            if (!$btn || !$btn.length) {
                 warn('Không thấy nút ký số XML_KSK');
                 return false;
             }
@@ -1633,14 +1810,32 @@
                 warn('Hộp thoại chọn vai trò ký không mở');
                 return false;
             }
+            if (kind !== 'xml') {
+                warn('SmartCA mở hộp thoại ký không phải XML; dừng để tránh chọn sai vai trò');
+                return false;
+            }
 
-            await sleep(100);
-            selectVaiTroXml(roleVal);
-            await sleep(100);
+            const optionWaitStartedAt = Date.now();
+            while (Date.now() - optionWaitStartedAt < 3000) {
+                const $select = $('#slb-vai-tro-sign-xml');
+                if ($select.find(`option[value="${roleVal}"]`).length || $select.find('option').length >= 2) break;
+                await sleep(100);
+            }
+
+            let selected = false;
+            for (let attempt = 0; attempt < 3; attempt++) {
+                selected = selectVaiTroXml(roleVal);
+                await sleep(150);
+                if (selected && String($('#slb-vai-tro-sign-xml').val()) === String(roleVal)) break;
+            }
+            if (!selected || String($('#slb-vai-tro-sign-xml').val()) !== String(roleVal)) {
+                warn(`Không chọn được đúng vai trò «${roleLabel}»; hủy bước ký`);
+                return false;
+            }
 
             log(`✓ Đã chọn vai trò «${roleLabel}» → Bấm KÝ SỐ`);
-            const $ky = kind === 'xml' ? $('#btn-ky-so-xml-ca') : $('#btn-ky-so-vnpt-ca');
-            if (!$ky.length) {
+            const $ky = $('#btn-ky-so-xml-ca');
+            if (!$ky.length || !$ky.is(':visible') || $ky.prop('disabled')) {
                 warn('Không tìm thấy nút bấm ký số');
                 return false;
             }
@@ -1696,10 +1891,12 @@
             }
 
             log(`===== ⚡ [SmartCA API] BẮT ĐẦU KÝ SỐ BN ${maBenhNhan} =====`);
+            const apiRequest = (options, timeout = 15000) => $.ajax(Object.assign({ timeout }, options));
+            const apiPost = (url, data, timeout = 15000) => apiRequest({ type: 'POST', url, data }, timeout);
 
             try {
                 // 1. Tải thông tin bệnh nhân SmartCA (không mở modal)
-                const patientInfo = await $.ajax({
+                const patientInfo = await apiRequest({
                     type: 'GET',
                     contentType: 'application/json',
                     dataType: 'json',
@@ -1725,7 +1922,7 @@
                 const kyHieuTarget = 'XML_KSK_DINH_KY_TREN_18_TUOI';
                 let phieuRow = null;
                 for (const ttKy of ['0', '1']) {
-                    const listSign = await $.ajax({
+                    const listSign = await apiRequest({
                         type: 'GET',
                         contentType: 'application/json',
                         dataType: 'json',
@@ -1761,26 +1958,26 @@
                     soBenhAn: '-1',
                     kyHieuPhieu: kyHieuTarget
                 };
-                const lockRes = await Promise.resolve($.ajax({
+                const lockRes = await apiRequest({
                     type: 'GET',
                     dataType: 'json',
                     url: 'smartca-get-phieu-lock?' + $.param(lockParams)
-                })).catch(() => null);
+                }).catch(() => null);
 
                 if (lockRes && lockRes.MA_NHAN_VIEN && lockRes.THOI_GIAN_LOCK) {
                     if (String(lockRes.MA_NHAN_VIEN) === String(phieuRow.MA_NHAN_VIEN || '')) {
                         const unlockPar = { ...lockParams, keySign: phieuRow.KEYSIGN || '' };
-                        const canUnlock = await Promise.resolve($.ajax({
+                        const canUnlock = await apiRequest({
                             type: 'GET',
                             dataType: 'json',
                             url: 'smartca-check-transaction-status?' + $.param(unlockPar)
-                        })).catch(() => false);
+                        }).catch(() => false);
                         if (canUnlock) {
-                            await Promise.resolve($.ajax({
+                            await apiRequest({
                                 type: 'GET',
                                 dataType: 'json',
                                 url: 'smartca-delete-phieu-lock?' + $.param(unlockPar)
-                            })).catch(() => null);
+                            }).catch(() => null);
                             log('✓ [SmartCA API] Đã tự động mở khóa phiếu cũ');
                         } else {
                             warn('[SmartCA API] Phiếu đang chờ xác nhận giao dịch cũ — Chuyển sang UI Mode');
@@ -1870,6 +2067,14 @@
                     { key: CFG.vaiTro1 || 'CKS_NGUOI_KET_LUAN', label: 'Người kết luận' },
                     { key: CFG.vaiTro2 || 'CKS_BENH_VIEN', label: 'Chữ ký bệnh viện' }
                 ];
+                const roleSignedOnServer = async (role) => {
+                    const roleNum = vaiTroMap[role.key];
+                    if (roleNum === undefined || roleNum === null) return false;
+                    const result = await apiPost('cmu_post_SMARTCA_KT_VAITRO_SIGNED_XML', {
+                        url: [dvttVal, kyHieuTarget, keySign, roleNum].join('```')
+                    });
+                    return Number(result) > 0;
+                };
 
                 // 5. Thực hiện ký từng vai trò qua API
                 for (const role of rolesToSign) {
@@ -1880,17 +2085,18 @@
                     }
 
                     const vaiTroNum = vaiTroMap[role.key];
-                    const daKyVaiTro = await $.post('cmu_post_SMARTCA_KT_VAITRO_SIGNED_XML', {
-                        url: [dvttVal, kyHieuTarget, keySign, vaiTroNum].join('```')
-                    });
-                    if (Number(daKyVaiTro) > 0) {
+                    if (vaiTroNum === undefined || vaiTroNum === null || !tagRefMap[role.key]) {
+                        warn(`[SmartCA API] Không xác định được mã vai trò «${role.label}»`);
+                        return false;
+                    }
+                    if (await roleSignedOnServer(role)) {
                         log(`✓ [SmartCA API] Server xác nhận «${role.label}» đã ký trước đó`);
                         markKyso(mayte, role.key);
                         continue;
                     }
 
                     if (!cksDonViTags.includes(role.key)) {
-                        const loginCheck = await $.ajax({ method: 'POST', url: 'smartca-check-login' });
+                        const loginCheck = await apiRequest({ method: 'POST', url: 'smartca-check-login' });
                         if (loginCheck && (loginCheck.STATUS === 'NOTLOGIN' || loginCheck.STATUS === 'NOTAUTH')) {
                             warn(`[SmartCA API] SmartCA chưa đăng nhập (${loginCheck.STATUS})`);
                             onSmartCaLoginDetected();
@@ -1898,7 +2104,7 @@
                         }
                     }
 
-                    const orderCheck = await $.post('cmu_post_SMARTCA_CHECK_ORDER_SIGN_XML', {
+                    const orderCheck = await apiPost('cmu_post_SMARTCA_CHECK_ORDER_SIGN_XML', {
                         url: [dvttVal, keySign, vaiTroNum].join('```')
                     });
                     if (Number(orderCheck) > 0) {
@@ -1906,7 +2112,7 @@
                         return false;
                     }
 
-                    const fileState = await $.ajax({
+                    const fileState = await apiRequest({
                         method: 'POST',
                         url: `smartca-check-user-file-login-signed?keysign=${encodeURIComponent(keySign)}&type=XML`
                     });
@@ -1931,13 +2137,13 @@
                         };
                         const sObjKcb = JSON.stringify(dataObject);
                         log(`⚡ [SmartCA API] Tạo XML gốc cho «${role.label}» (send-xml-emr-ngoai-tru)...`);
-                        const xmlGenRes = await $.ajax({
+                        const xmlGenRes = await apiRequest({
                             type: 'POST',
                             contentType: 'application/json',
                             dataType: 'json',
                             url: 'send-xml-emr-ngoai-tru',
                             data: sObjKcb
-                        });
+                        }, 30000);
                         if (!xmlGenRes || String(xmlGenRes.errorCode) !== '1' || !xmlGenRes.contentFile || !xmlGenRes.contentFile.buffer) {
                             warn(`[SmartCA API] Không tạo được XML gốc (${(xmlGenRes && xmlGenRes.message) || 'rỗng'}) — Fallback UI`);
                             return false;
@@ -2015,38 +2221,78 @@
 
                     log(`⚡ [SmartCA API] Gửi ký số «${role.label}» (${urlSignHash})...`);
                     setStatus(`Ký API «${role.label}»...`);
-                    let signRes = await $.ajax({
-                        type: 'POST',
-                        contentType: 'application/json',
-                        dataType: 'json',
-                        url: urlSignHash,
-                        data: JSON.stringify(signPayload),
-                        timeout: Math.max(CFG.kysoWaitMs || 60000, 90000)
-                    });
+                    let signRes;
+                    try {
+                        signRes = await apiRequest({
+                            type: 'POST',
+                            contentType: 'application/json',
+                            dataType: 'json',
+                            url: urlSignHash,
+                            data: JSON.stringify(signPayload)
+                        }, Math.max(CFG.kysoWaitMs || 30000, 90000));
+                    } catch (signError) {
+                        let confirmedOnServer = false;
+                        for (let attempt = 0; attempt < 3; attempt++) {
+                            await sleep(1000);
+                            try {
+                                if (await roleSignedOnServer(role)) {
+                                    confirmedOnServer = true;
+                                    break;
+                                }
+                            } catch (verifyError) {
+                                console.warn('[KSK_AUTO] Không xác minh được trạng thái ký API:', verifyError);
+                            }
+                        }
+                        if (confirmedOnServer) {
+                            markKyso(mayte, role.key);
+                            success(`✓ [SmartCA API] Server xác nhận «${role.label}» đã ký dù phản hồi bị gián đoạn`);
+                            continue;
+                        }
+                        const uncertainResult = signError && (signError.statusText === 'timeout'
+                            || signError.statusText === 'abort' || signError.status === 0);
+                        if (uncertainResult) {
+                            warn(`[SmartCA API] Không xác định được kết quả «${role.label}» sau lỗi kết nối; không chạy UI để tránh ký trùng`);
+                            return 'SIGN_RESULT_UNKNOWN';
+                        }
+                        throw signError;
+                    }
                     if (typeof signRes === 'string') {
                         try { signRes = JSON.parse(signRes); } catch (e) { }
                     }
 
                     if (signRes && Number(signRes.SUCCESS) > 0 && signRes.DOCTYPE === 'XML' && signRes.KEYMINIO) {
                         if (role.key === 'CKS_BENH_VIEN') {
-                            await Promise.resolve($.post('api/kham-suc-khoe/qd-2062/tiep-nhan', {
+                            await apiPost('api/kham-suc-khoe/qd-2062/tiep-nhan', {
                                 maBenhNhan: bnMa,
                                 soVaoVien: bnSvv,
                                 iD: '0',
                                 loaiKSK: 'TU_18_TUOI_TRO_LEN',
                                 keyMinIO: signRes.KEYMINIO,
                                 dvtt: dvttVal
-                            })).catch(() => null);
+                            }, 20000).catch(() => null);
                         }
-                        await Promise.resolve($.ajax({
+                        await apiRequest({
                             type: 'GET',
                             dataType: 'json',
                             url: 'smartca-delete-phieu-lock?' + $.param({ ...lockParams, keySign })
-                        })).catch(() => null);
+                        }, 10000).catch(() => null);
 
                         markKyso(mayte, role.key);
                         success(`✓ ⚡ [SmartCA API] Hoàn tất ký «${role.label}»!`);
                     } else {
+                        let confirmedOnServer;
+                        try {
+                            confirmedOnServer = await roleSignedOnServer(role);
+                        } catch (verifyError) {
+                            warn(`[SmartCA API] Không xác minh được kết quả «${role.label}»; không chạy UI để tránh ký trùng`);
+                            console.error(verifyError);
+                            return 'SIGN_RESULT_UNKNOWN';
+                        }
+                        if (confirmedOnServer) {
+                            markKyso(mayte, role.key);
+                            success(`✓ [SmartCA API] Server xác nhận «${role.label}» đã ký`);
+                            continue;
+                        }
                         const msg = (signRes && (signRes.MESSAGE || signRes.message)) || 'Không rõ lỗi';
                         warn(`[SmartCA API] Ký «${role.label}» thất bại: ${msg} — Chuyển sang UI Mode`);
                         return false;
@@ -2083,7 +2329,7 @@
             const mayte = bnMayte();
             if (kysoDu2(mayte)) {
                 log(`BN ${mayte} đã có đủ 2 chữ ký số — Bỏ qua ký`);
-                return;
+                return true;
             }
 
             log(`===== BẮT ĐẦU KÝ SỐ SMARTCA BN ${mayte} =====`);
@@ -2097,7 +2343,7 @@
 
             if (!(await openSmartCaFloat())) {
                 if (isSmartCALoginAppeared()) return 'LOGIN_DETECTED';
-                return;
+                return false;
             }
             if (isSmartCALoginAppeared()) {
                 onSmartCaLoginDetected();
@@ -2106,7 +2352,7 @@
 
             if (!(await goTabKhac(5000))) {
                 closeSmartCaModal();
-                return;
+                return false;
             }
 
             const $signBtn = await waitKskSignBtn(CFG.kysoGridWaitMs);
@@ -2117,7 +2363,7 @@
                 }
                 warn('Không tìm thấy nút ký XML KSK trong bảng — Đóng SmartCA');
                 closeSmartCaModal();
-                return;
+                return false;
             }
 
             // Ký vai trò 1
@@ -2128,7 +2374,7 @@
                 }
                 if (!ret1) {
                     closeSmartCaModal();
-                    return;
+                    return false;
                 }
             }
 
@@ -2140,17 +2386,29 @@
             // Ký vai trò 2
             if (!kysoDaKy(mayte, CFG.vaiTro2)) {
                 await sleep(200);
-                await goTabKhac(4000);
-                await waitKskSignBtn(CFG.kysoGridWaitMs);
+                if (!(await goTabKhac(4000)) || !(await waitKskSignBtn(CFG.kysoGridWaitMs))) {
+                    warn('Không tải lại được nút ký cho vai trò Chữ ký bệnh viện');
+                    closeSmartCaModal();
+                    return false;
+                }
                 const ret2 = await kyMotVaiTro(CFG.vaiTro2, 'Chữ ký bệnh viện');
                 if (ret2 === 'LOGIN_DETECTED') {
                     return 'LOGIN_DETECTED';
+                }
+                if (!ret2) {
+                    closeSmartCaModal();
+                    return false;
                 }
             }
 
             await sleep(200);
             closeSmartCaModal();
+            if (!kysoDu2(mayte)) {
+                warn(`Chưa xác nhận đủ hai chữ ký cho BN ${mayte}`);
+                return false;
+            }
             success(`Đã hoàn tất ký số SmartCA cho BN ${mayte}`);
+            return true;
         }
 
         // =========================================================================
@@ -2158,6 +2416,7 @@
         // =========================================================================
         async function fillCurrentPatient(id) {
             if (STOP) return;
+            let signingOutcome = null;
             const m0 = mayteOfRow(id);
             if (m0 && BN_DONE.has(m0)) {
                 log(`⏭ Bệnh nhân ${m0} đã được xử lý trước đó — Bỏ qua`);
@@ -2233,21 +2492,38 @@
                     if (CFG.enableKySo) {
                         if (isSmartCALoginAppeared()) {
                             onSmartCaLoginDetected();
+                            signingOutcome = 'login_detected';
                         } else {
                             try {
                                 let signRet = false;
-                                if (CFG.apiMode) {
+                                if (CFG.signingMode === 'api') {
                                     signRet = await kySoViaApi();
                                 }
-                                if (signRet !== true && signRet !== 'LOGIN_DETECTED' && !STOP) {
+                                if (signRet !== true && signRet !== 'LOGIN_DETECTED'
+                                    && signRet !== 'SIGN_RESULT_UNKNOWN' && !STOP) {
                                     signRet = await kySoViaFloat();
                                 }
                                 if (signRet === 'LOGIN_DETECTED') {
                                     warn('Đã bỏ qua ký số cho BN này do phát hiện menu Đăng nhập SmartCA.');
+                                    signingOutcome = 'login_detected';
+                                } else if (signRet === 'SIGN_RESULT_UNKNOWN') {
+                                    setStatus('Kết quả ký API chưa xác định; kiểm tra trạng thái chữ ký trước khi chạy lại.');
+                                    warn('Không chạy lại ký UI vì chưa xác minh được kết quả API; hãy kiểm tra chữ ký trên HIS trước khi thử lại.');
+                                    signingOutcome = 'unknown';
+                                    STOP = true;
+                                } else if (signRet !== true) {
+                                    warn('Không xác nhận hoàn tất đủ hai chữ ký; dừng xử lý để kiểm tra hồ sơ này.');
+                                    setStatus('Ký số chưa hoàn tất — đã dừng để kiểm tra hồ sơ.');
+                                    signingOutcome = 'failed';
+                                    STOP = true;
+                                } else {
+                                    signingOutcome = 'signed';
                                 }
                             } catch (e) {
                                 warn(`Ký số SmartCA gặp lỗi: ${e && e.message}`);
                                 closeSmartCaModal();
+                                signingOutcome = 'failed';
+                                STOP = true;
                             }
                         }
                     } else {
@@ -2259,7 +2535,11 @@
             // Hủy & kết thúc ca khám
             await safeHuy();
             markBnDone(id);
-            success(`Hoàn tất xuất sắc BN #${id} ${mayte ? `(${mayte})` : ''}`);
+            if (signingOutcome === 'failed' || signingOutcome === 'unknown') {
+                log(`Đã kết thúc nhập KSK BN #${id} ${mayte ? `(${mayte})` : ''}; chữ ký chưa được xác nhận`);
+            } else {
+                success(`Hoàn tất KSK BN #${id} ${mayte ? `(${mayte})` : ''}${signingOutcome === 'signed' ? ' và ký số' : ''}`);
+            }
         }
 
         async function processRow(id) {
@@ -2291,23 +2571,74 @@
                 return;
             }
 
+            const scanPastDates = CFG.scanPastDates;
+            const scanDays = Math.max(1, Math.min(36500, parseInt(CFG.pastDaysToScan, 10) || 30));
+            let scanStartDate = null;
+            if (scanPastDates) {
+                if (!$('#ngaykhambenh').length) {
+                    warn('Không tìm thấy ô ngày khám (#ngaykhambenh); không thể dò ngày cũ');
+                    return;
+                }
+                scanStartDate = parseDateDdMmYyyy($('#ngaykhambenh').val());
+                if (!scanStartDate) {
+                    warn('Ngày khám hiện tại không hợp lệ; cần định dạng dd/mm/yyyy để dò ngày cũ');
+                    return;
+                }
+                const statusValue = CFG.examMode === 'dang_kham' ? '2' : '1';
+                if (!$(`input[name="trangthaikham"][value="${statusValue}"]`).length) {
+                    warn(`Không tìm thấy bộ lọc trạng thái đang chọn (giá trị ${statusValue})`);
+                    return;
+                }
+            }
+
             RUNNING = true;
             STOP = false;
             REFRESH_REQUESTED = false;
             STEP = 0;
             updateUIButtons();
-            log('🚀 BẮT ĐẦU VẬN HÀNH TỰ ĐỘNG LIÊN TỤC');
+            log(scanPastDates
+                ? `🚀 BẮT ĐẦU DÒ ${scanDays} NGÀY THEO CHẾ ĐỘ ${CFG.examMode === 'dang_kham' ? 'ĐANG KHÁM' : 'CHỜ KHÁM'}`
+                : '🚀 BẮT ĐẦU VẬN HÀNH TỰ ĐỘNG LIÊN TỤC');
             updateCount();
 
+            let scanDayIndex = 0;
+            if (scanPastDates && !(await loadScanDate(scanStartDate, 1, scanDays))) {
+                STOP = true;
+            }
+
             while (!STOP) {
+                let activeScanRow = null;
                 try {
-                    if (CFG.enableAutoRefresh || REFRESH_REQUESTED) {
+                    if (scanPastDates) {
+                        if (REFRESH_REQUESTED) {
+                            REFRESH_REQUESTED = false;
+                            await refreshList();
+                        }
+                    } else if (CFG.enableAutoRefresh || REFRESH_REQUESTED) {
                         REFRESH_REQUESTED = false;
                         await refreshList();
                     }
+                    if (STOP) break;
 
                     const ids = pendingIds();
                     if (!ids.length) {
+                        if (scanPastDates) {
+                            const nextDayIndex = scanDayIndex + 1;
+                            if (nextDayIndex >= scanDays) {
+                                success(`Đã dò xong ${scanDays} ngày theo chế độ ${CFG.examMode === 'dang_kham' ? 'Đang khám' : 'Chờ khám'}`);
+                                break;
+                            }
+
+                            const nextDate = new Date(scanStartDate);
+                            nextDate.setDate(nextDate.getDate() - nextDayIndex);
+                            scanDayIndex = nextDayIndex;
+                            if (!(await loadScanDate(nextDate, scanDayIndex + 1, scanDays))) {
+                                STOP = true;
+                                break;
+                            }
+                            continue;
+                        }
+
                         const waitSec = (CFG.emptyWaitMs / 1000).toFixed(1);
                         log(`Danh sách trống — Chờ ${waitSec}s rồi làm mới lại danh sách...`);
                         updateCount();
@@ -2316,12 +2647,17 @@
                     }
 
                     const id = pickRandomId();
+                    activeScanRow = id;
                     if (!id) {
                         await sleep(CFG.emptyWaitMs);
                         continue;
                     }
 
                     await processRow(id);
+                    if (scanPastDates && !DONE.has(String(id))) {
+                        warn(`BN #${id} chưa xử lý xong; dừng dò để tránh lặp lại hồ sơ`);
+                        STOP = true;
+                    }
                 } catch (e) {
                     warn(`Lỗi trong vòng lặp chính: ${e && e.message}`);
                     console.error(e);
@@ -2329,6 +2665,10 @@
                         await clickDongY(600);
                         await safeHuy();
                     } catch (e2) { }
+                    if (scanPastDates && activeScanRow) {
+                        warn(`Dừng dò ngày do lỗi tại BN #${activeScanRow}`);
+                        STOP = true;
+                    }
                 }
 
                 await sleep(CFG.stepDelay);
@@ -2886,7 +3226,7 @@
                     <div id="ksk_pro_header">
                         <div class="title">
                             <span>⚡ KSK & SmartCA Pro</span>
-                            <span class="badge">v4.0</span>
+                            <span class="badge">v4.1</span>
                         </div>
                         <div style="display:flex; gap:4px;">
                             <button type="button" class="ksk-hbtn" id="ksk_btn_min" title="Thu nhỏ/Mở rộng">_</button>
@@ -2905,15 +3245,7 @@
                         <div class="ksk-stats-card">
                             <div class="ksk-stat-item">
                                 <span class="ksk-stat-val" id="ksk_stat_total">0</span>
-                                <span class="ksk-stat-lbl">Trên lưới</span>
-                            </div>
-                            <div class="ksk-stat-item">
-                                <span class="ksk-stat-val done" id="ksk_stat_done">0</span>
-                                <span class="ksk-stat-lbl">Hoàn thành</span>
-                            </div>
-                            <div class="ksk-stat-item">
-                                <span class="ksk-stat-val" id="ksk_stat_pending">0</span>
-                                <span class="ksk-stat-lbl">Còn lại</span>
+                                <span class="ksk-stat-lbl">Số bệnh nhân trong danh sách</span>
                             </div>
                             <div class="ksk-stats-actions">
                                 <button type="button" class="ksk-btn ksk-btn-refresh" id="ksk_btn_refresh" title="Làm mới danh sách #lammoi">⟳ Nạp DS</button>
@@ -2930,6 +3262,10 @@
                             <div class="ksk-chip ${CFG.enableKySo ? 'active' : ''}" id="ksk_chip_kyso" title="Nhấn để bật/tắt ký số">
                                 <span>Ký số:</span>
                                 <strong>${CFG.enableKySo ? '🔐 BẬT' : '🔓 TẮT'}</strong>
+                            </div>
+                            <div class="ksk-chip ${CFG.signingMode === 'api' ? 'active' : 'editing'}" id="ksk_chip_sign_mode" title="Nhấn để đổi giữa ký qua giao diện và ký API">
+                                <span>Phương thức ký:</span>
+                                <strong>${CFG.signingMode === 'api' ? '⚡ API' : '🖱️ UI/UX'}</strong>
                             </div>
                             <div class="ksk-chip ${CFG.enableAutoRefresh ? 'active' : ''}" id="ksk_chip_refresh" title="Nhấn để bật/tắt tự làm mới">
                                 <span>Tự làm mới:</span>
@@ -3080,8 +3416,22 @@
                                     <input type="checkbox" id="cfg_skip_cccd" ${CFG.skipInvalidCccd ? 'checked' : ''}> Bỏ qua ca khám nếu CCCD không đủ 12 số
                                 </label>
                                 <label>
-                                    <input type="checkbox" id="cfg_api_mode" ${CFG.apiMode ? 'checked' : ''}> ⚡ API Mode Siêu Tốc (Lưu thẳng API, tự fallback UI nếu lỗi)
+                                    <input type="checkbox" id="cfg_api_mode" ${CFG.apiMode ? 'checked' : ''}> API Mode lưu phiếu KSK (không ảnh hưởng phương thức ký)
                                 </label>
+                                <label>
+                                    <input type="checkbox" id="cfg_scan_past_dates" ${CFG.scanPastDates ? 'checked' : ''}> Dò danh sách ngày cũ theo chế độ khám đang chọn
+                                </label>
+                            </div>
+                            <div class="ksk-row">
+                                <span class="ksk-lbl">Phương thức ký SmartCA:</span>
+                                <select class="ksk-input" id="cfg_signing_mode">
+                                    <option value="ui" ${CFG.signingMode === 'ui' ? 'selected' : ''}>UI/UX SmartCA</option>
+                                    <option value="api" ${CFG.signingMode === 'api' ? 'selected' : ''}>API (tự chuyển UI nếu lỗi)</option>
+                                </select>
+                            </div>
+                            <div class="ksk-row">
+                                <span class="ksk-lbl">Số ngày dò (tính cả ngày đang chọn):</span>
+                                <input type="number" class="ksk-input" id="cfg_past_days" value="${CFG.pastDaysToScan}" min="1" max="36500" step="1">
                             </div>
                         </div>
 
@@ -3188,7 +3538,12 @@
             CFG.autoFixCccd = $('#cfg_fix_cccd').is(':checked');
             CFG.skipInvalidCccd = $('#cfg_skip_cccd').is(':checked');
             CFG.apiMode = $('#cfg_api_mode').is(':checked');
+            CFG.signingMode = $('#cfg_signing_mode').val() === 'api' ? 'api' : 'ui';
+            CFG.scanPastDates = $('#cfg_scan_past_dates').is(':checked');
+            const pastDays = parseInt($('#cfg_past_days').val(), 10);
+            if (!isNaN(pastDays)) CFG.pastDaysToScan = Math.max(1, Math.min(36500, pastDays));
 
+            updateSigningModeUI();
             saveConfigToStorage();
             success('Đã lưu và áp dụng cấu hình mới vào hệ thống!');
         }
@@ -3213,6 +3568,10 @@
 
             // Quick chips
             $('#ksk_chip_exam_mode').on('click', function () {
+                if (RUNNING) {
+                    warn('Không thể đổi chế độ khám khi tiến trình đang chạy');
+                    return;
+                }
                 CFG.examMode = CFG.examMode === 'dang_kham' ? 'cho_kham' : 'dang_kham';
                 const isDangKham = CFG.examMode === 'dang_kham';
                 $(this).toggleClass('editing', isDangKham).toggleClass('active', !isDangKham);
@@ -3226,6 +3585,17 @@
                 $(this).toggleClass('active', CFG.enableKySo);
                 $(this).find('strong').text(CFG.enableKySo ? '🔐 BẬT' : '🔓 TẮT');
                 log(`Ký số SmartCA: ${CFG.enableKySo ? 'BẬT' : 'TẮT'}`);
+                saveConfigToStorage();
+            });
+
+            $('#ksk_chip_sign_mode').on('click', function () {
+                if (RUNNING) {
+                    warn('Không thể đổi phương thức ký khi tiến trình đang chạy');
+                    return;
+                }
+                CFG.signingMode = CFG.signingMode === 'api' ? 'ui' : 'api';
+                updateSigningModeUI();
+                log(`Phương thức ký SmartCA: ${CFG.signingMode === 'api' ? 'API (tự chuyển UI nếu lỗi)' : 'UI/UX'}`);
                 saveConfigToStorage();
             });
 
@@ -3322,7 +3692,7 @@
 
         // Xuất Global API KSK_AUTO
         window.KSK_AUTO = {
-            version: '4.0',
+            version: '4.1',
             start,
             stop,
             runOne,
